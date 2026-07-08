@@ -1,0 +1,10 @@
+CPG synthetic report
+configuration: means_40_80
+means: 0.4, 0.8
+epsilon: 1e-05
+R: 6
+final_max_residual: 7.438295828066052424e-15
+final_max_relative_residual: 7.013565947749207701e-16
+train_max_relative: 7.013565947749207701e-16
+test_max_relative: 4.995773476832422404e-16
+elapsed_seconds: 1.955948

@@ -1,0 +1,30 @@
+CPG lambda snapshot report
+
+dataset_source: results/lambda/dataset/lambda_dataset.npz
+epsilon: 0.01
+snapshot_matrix_shape: (50, 57)
+split_strategy: fem-sols-paper: train where rad - 0.65 in {0.15 + 0.01 i | 0 <= i <= 30}
+validation: offline basis built on training radii only; test residuals use unseen held-out radii.
+train_count: 31
+test_count: 19
+train_radii: [0.8, 0.81, 0.82, 0.83, 0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0, 1.01, 1.02, 1.03, 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.1]
+test_radii: [1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17, 1.18, 1.19, 1.2, 1.21, 1.22, 1.23, 1.24, 1.25, 1.26, 1.27, 1.28, 1.29]
+basis_shape: (5, 57)
+selected_count_R: 5
+selected_indices: [0, 30, 3, 5, 1]
+selected_radii: [0.8, 1.1, 0.83, 0.85, 0.81]
+final_max_residual: 2.260909257029105821e-02
+final_max_relative_residual: 7.982893224656394116e-02
+train_max_relative_residual: 2.961726272985342606e-02
+train_mean_relative_residual: 1.709384351867477073e-02
+test_max_relative_residual: 7.982893224656394116e-02
+test_mean_relative_residual: 4.536065419568019452e-02
+elapsed_seconds: 0.001917
+
+Files:
+- cpg_basis.npy: selected CPG basis snapshots
+- cpg_selected_indices.txt: selected row numbers in the input snapshot matrix
+- cpg_selected_radii.txt: selected radius values
+- cpg_coefficients.npy: non-negative coefficients for projecting each input snapshot
+- cpg_projections.npy: CPG projection/reconstruction of every input snapshot
+- cpg_residuals.csv: residual per radius after the final CPG basis

@@ -1,0 +1,8 @@
+ADG synthetic report
+epsilon: 0.001
+R: 2
+final_max_residual: 3.666772028059174361e-14
+final_max_relative_residual: 4.059543948771766222e-15
+train_max_relative: 4.059543948771766222e-15
+test_max_relative: 3.674795394350711976e-15
+elapsed_seconds: 0.044614

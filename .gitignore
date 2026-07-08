@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+
+ae_results*/
+angle_greedy_results/
+component_sweep_results/
+nmf_results/
+lambda_cpg_results/
+method_comparison_results/
+merged_lambda_data/
+merged_primal_data/
+
+contact_force_dashboard.html
+cpg_basis_contact.npy
+cpg_selected_contact.txt

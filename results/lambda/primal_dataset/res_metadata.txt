@@ -1,0 +1,19 @@
+Merged primal solution snapshot dataset
+
+snapshot_count: 50
+components_per_snapshot: 3696
+snapshot_matrix_shape: (50, 3696)
+radii_min: 0.8
+radii_max: 1.29
+value_min: -4.000000000000000222e-01
+value_max: 5.243249532556328724e-02
+
+Files:
+- res_snapshots.npy: rows are flattened primal solution snapshots
+- res_radii.txt: radius value for each snapshot row
+- res_table.txt: first column is radius, remaining columns are primal values
+- res_dataset.npz: snapshots, radii, radius_labels, sources
+
+Note:
+- These plots use stored primal indices or inferred index-space grids.
+- Physical mesh coordinates/connectivity are not present in the archive.

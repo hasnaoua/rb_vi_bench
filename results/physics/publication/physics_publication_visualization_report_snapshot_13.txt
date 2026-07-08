@@ -1,0 +1,20 @@
+Physics HF/ROM visualization
+dataset: results/physics/dataset/physics_dataset.npz
+results_dir: results/physics/reduction
+methods: ADG, CPG
+comparison_mode: overlay-only
+snapshot_index: 13
+displacement_mm: 0.245
+profile_reduction: mean
+active_threshold: 4.531306722521e+03
+relative_residuals:
+- ADG: 1.986134779059911371e-16
+- CPG: 1.966225649773711837e-02
+best_method: ADG
+absolute_residuals:
+- ADG: 5.970325577489363984e-08
+- CPG: 5.910478690432080999e+06
+active_z_spans_mm: [1.45, 5]
+generated_files:
+- results/physics/publication/physics_publication_hf_rom_superposition_snapshots_2_4_6_9_11_13.png
+- results/physics/publication/physics_publication_hf_rom_superposition_snapshots_2_4_6_9_11_13.pdf

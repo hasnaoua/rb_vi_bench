@@ -1,0 +1,10 @@
+ADG synthetic report
+configuration: means_20_50_80
+means: 0.2, 0.5, 0.8
+epsilon: 0.001
+R: 16
+final_max_residual: 1.441945553076593167e-01
+final_max_relative_residual: 2.669822918469149167e-02
+train_max_relative: 8.684512016115956179e-16
+test_max_relative: 2.669822918469149167e-02
+elapsed_seconds: 6.744203
