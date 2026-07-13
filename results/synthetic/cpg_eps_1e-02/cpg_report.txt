@@ -1,8 +1,0 @@
-CPG synthetic report
-epsilon: 0.01
-R: 4
-final_max_residual: 1.899539405080373771e-14
-final_max_relative_residual: 2.176088704271025137e-15
-train_max_relative: 2.176088704271025137e-15
-test_max_relative: 1.485707200644955861e-15
-elapsed_seconds: 0.230136

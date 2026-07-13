@@ -1,6 +1,6 @@
 import numpy as np
 
-from reduction_common import _compute_gain_series
+from greedy.core.reduction_common import _compute_gain_series
 
 
 def test_relative_gain_uses_previous_error_normalization():

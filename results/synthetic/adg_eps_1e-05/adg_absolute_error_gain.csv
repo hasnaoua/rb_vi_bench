@@ -1,2 +1,0 @@
-method,from_iteration,to_iteration,error_before,error_after,log10_error_before,log10_error_after,absolute_gain,relative_gain,log10_gain
-Angular Defect Greedy,1,2,8.391497302057048913e+00,3.666772028059174361e-14,9.238394592796597138e-01,-1.343571609032126624e+01,8.391497302057011609e+00,9.999999999999955591e-01,1.435955554960092684e+01
