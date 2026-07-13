@@ -229,6 +229,8 @@ def save_outputs(
         f"absolute_stopping_tolerance: {stopping_tolerance:.18e}",
         f"snapshot_matrix_shape: {snapshots.shape}",
         f"normalize_snapshots: {greedy.normalize_snapshots}",
+        f"angle_batch_tol: {greedy.angle_batch_tol}",
+        f"batch_size_history: {greedy.batch_size_history}",
         f"split_strategy: {split_strategy}",
         "validation: offline basis built on training radii only; "
         "test residuals use unseen held-out radii.",
@@ -321,6 +323,20 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--angle-batch-tol",
+        type=float,
+        default=None,
+        help=(
+            "Optional angular batch tolerance epsilon_angle in [0, 1]. When set, "
+            "each round considers the maximum-angle BAND (unresolved snapshots "
+            "within arcsin(epsilon_angle) of theta_max) and admits a pairwise "
+            "well-separated subset of it: a candidate joins only if its pairwise "
+            "angle to every already-admitted member exceeds arcsin(epsilon_angle). "
+            "At least one angle maximizer is always admitted. Default (unset) keeps "
+            "the original one-maximizer-per-round behaviour."
+        ),
+    )
+    parser.add_argument(
         "--split-strategy",
         choices=["fem-sols-paper", "fraction"],
         default="fem-sols-paper",
@@ -372,6 +388,7 @@ def main() -> None:
         snapshots=train_snapshots,
         epsilon=args.epsilon,
         normalize_snapshots=args.normalize_snapshots,
+        angle_batch_tol=args.angle_batch_tol,
     )
     greedy.compute_phases()
     elapsed = time.perf_counter() - t0

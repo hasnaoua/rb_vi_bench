@@ -51,6 +51,23 @@ class AngularDefectGreedy:
     are always the original, physical-scale snapshots regardless of this
     flag, since span_+ is likewise invariant to positive per-generator
     scaling.
+
+    ``angle_batch_tol`` (epsilon_angle) turns each greedy round into a
+    pairwise-separated batch. With the default ``None`` a round admits only the
+    snapshots at exactly theta_max (the original behaviour). When
+    ``angle_batch_tol`` is set to a value in ``[0, 1]`` the round instead
+    considers the whole maximum-angle *band* -- every unresolved snapshot whose
+    angle to the current cone is within ``arcsin(epsilon_angle)`` of theta_max
+    -- and traverses it by decreasing angle-to-cone, admitting a candidate only
+    if its pairwise angle to every already-admitted member exceeds
+    ``arcsin(epsilon_angle)``. The leading (maximum-angle) candidate is always
+    admitted, so at least one maximizer enters and theta_max still decreases
+    every round (the Theorem 3.5 certificate is preserved). The band makes the
+    mechanism engage on generic floating-point data (where exact ties never
+    occur); the separation keeps just a well-separated subset, so several
+    non-redundant directions enter per round -- far fewer greedy rounds at equal
+    accuracy -- without admitting near-duplicate maximizers that would inflate R
+    and worsen the basis condition number.
     """
 
     def __init__(
@@ -60,6 +77,7 @@ class AngularDefectGreedy:
         *,
         zero_tol: float = 1e-14,
         normalize_snapshots: bool = False,
+        angle_batch_tol: float | None = None,
     ):
         snapshots = np.asarray(snapshots, dtype=float)
         if snapshots.ndim != 2:
@@ -68,11 +86,14 @@ class AngularDefectGreedy:
             )
         if epsilon < 0.0:
             raise ValueError("epsilon must be non-negative")
+        if angle_batch_tol is not None and not (0.0 <= angle_batch_tol <= 1.0):
+            raise ValueError("angle_batch_tol (epsilon_angle) must be in [0, 1]")
 
         self.snapshots = snapshots
         self.epsilon = float(epsilon)
         self.zero_tol = float(zero_tol)
         self.normalize_snapshots = bool(normalize_snapshots)
+        self.angle_batch_tol = None if angle_batch_tol is None else float(angle_batch_tol)
 
         # Snapshots used to drive selection/stopping (candidate angle,
         # unresolved-set membership, stopping_scale/tolerance). When
@@ -111,6 +132,11 @@ class AngularDefectGreedy:
         # Diagnostics for each accepted greedy candidate after initialization.
         self.angle_history: list[float] = []
         self.candidate_residual_history: list[float] = []
+
+        # Number of snapshots admitted per enrichment round (one entry per
+        # completed round). With angle_batch_tol=None this is the tied-maximizer
+        # count; with a separation tolerance it is the well-separated batch size.
+        self.batch_size_history: list[int] = []
 
         # Theorem 3.5 (angular defect controls the global error) certificate,
         # one entry per completed enrichment round p: theta_max_history[p] is
@@ -319,6 +345,81 @@ class AngularDefectGreedy:
         )
         return [int(index) for index in np.flatnonzero(tied)]
 
+    def _band_angle_candidates(
+        self,
+        residuals: np.ndarray,
+        angles: np.ndarray,
+    ) -> list[int]:
+        """
+        Maximum-angle *band* for one enrichment round.
+
+        Unlike ``_next_angle_candidates`` (which returns only the snapshots at
+        exactly theta_max, and is therefore almost always a singleton on
+        floating-point data), this returns every still-unresolved snapshot whose
+        angle to the current cone is within ``arcsin(angle_batch_tol)`` of
+        theta_max. That band is what the pairwise-separation filter then thins,
+        so the batch mechanism actually engages on generic datasets.
+        """
+        unresolved = residuals > self.stopping_tolerance
+        if self.selected_indices:
+            unresolved[np.array(self.selected_indices, dtype=int)] = False
+        if not np.any(unresolved):
+            return []
+        theta_max = float(np.max(np.where(unresolved, angles, -np.inf)))
+        if not np.isfinite(theta_max):
+            return []
+        band = float(np.arcsin(np.clip(self.angle_batch_tol, 0.0, 1.0)))
+        in_band = unresolved & (angles >= theta_max - band)
+        return [int(index) for index in np.flatnonzero(in_band)]
+
+    def _separate_candidates(
+        self,
+        candidates: list[int],
+        angles: np.ndarray,
+    ) -> list[int]:
+        """
+        Pairwise-separation filter applied *after* the base maximum-angle
+        selection.
+
+        The base algorithm is left untouched: it still returns the snapshots at
+        the largest angle to the current cone (``_next_angle_candidates``). This
+        filter merely refuses to admit all of them at once. The candidates are
+        traversed by decreasing angle-to-cone and one is admitted only if its
+        pairwise angle to every already-admitted candidate exceeds
+        ``arcsin(angle_batch_tol)``. The leading (maximum-angle) candidate is
+        always admitted, so at least one maximizer enters every round and the
+        Theorem 3.5 certificate is preserved. Pairwise angles use snapshot
+        *directions* and are therefore scale-invariant (identical whether or not
+        ``normalize_snapshots`` is set).
+        """
+        if len(candidates) <= 1:
+            return list(candidates)
+
+        cand = np.asarray(candidates, dtype=int)
+        # Decreasing angle-to-cone so a maximizer leads and is admitted first.
+        order = cand[np.argsort(angles[cand], kind="stable")[::-1]]
+        min_separation = float(np.arcsin(np.clip(self.angle_batch_tol, 0.0, 1.0)))
+
+        admitted: list[int] = []
+        admitted_units: list[np.ndarray] = []
+        for candidate in order:
+            v = self._fit_snapshots[candidate]
+            norm = float(np.linalg.norm(v))
+            if norm <= self.zero_tol:
+                continue
+            unit = v / norm
+            if admitted:
+                cosines = np.clip(np.asarray(admitted_units) @ unit, -1.0, 1.0)
+                # Pairwise angle to the closest already-admitted candidate must
+                # strictly exceed the separation floor to be admitted.
+                if float(np.min(np.arccos(cosines))) <= min_separation:
+                    continue
+            admitted.append(int(candidate))
+            admitted_units.append(unit)
+
+        # Guarantee at least one maximizer even if every candidate was degenerate.
+        return admitted if admitted else [int(order[0])]
+
     # ------------------------------------------------------------------
     # Main algorithm
     # ------------------------------------------------------------------
@@ -329,6 +430,7 @@ class AngularDefectGreedy:
         self.relative_residual_history = []
         self.angle_history = []
         self.candidate_residual_history = []
+        self.batch_size_history = []
         self.theta_max_history = []
         self.sigma_history = []
         self.certificate_history = []
@@ -347,7 +449,17 @@ class AngularDefectGreedy:
         self.relative_residual_history.append(max_residual / self.stopping_scale)
 
         while True:
-            candidates = self._next_angle_candidates(residuals, angles)
+            if self.angle_batch_tol is None:
+                # Base algorithm (unchanged): snapshots at the largest angle to
+                # the current cone among the still-unresolved set.
+                candidates = self._next_angle_candidates(residuals, angles)
+            else:
+                # Widen the maximum-angle selection to a band within
+                # arcsin(angle_batch_tol) of theta_max, then keep only a
+                # pairwise angularly-separated subset of that band.
+                candidates = self._separate_candidates(
+                    self._band_angle_candidates(residuals, angles), angles
+                )
             if not candidates:
                 break
 
@@ -359,7 +471,7 @@ class AngularDefectGreedy:
                 max(self.stopping_tolerance, self.stopping_scale * sigma)
             )
 
-            accepted_any = False
+            accepted_count = 0
             for candidate in candidates:
                 candidate_residual = float(residuals[candidate])
                 candidate_angle = float(angles[candidate])
@@ -370,10 +482,11 @@ class AngularDefectGreedy:
                 self.selected_indices.append(candidate)
                 self.angle_history.append(candidate_angle)
                 self.candidate_residual_history.append(candidate_residual)
-                accepted_any = True
+                accepted_count += 1
 
-            if not accepted_any:
+            if accepted_count == 0:
                 break
+            self.batch_size_history.append(accepted_count)
 
             residuals, angles = self._compute_projection_metrics()
             max_residual = float(np.max(residuals))
