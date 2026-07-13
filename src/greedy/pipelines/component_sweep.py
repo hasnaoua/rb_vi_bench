@@ -18,7 +18,7 @@ import numpy as np
 from greedy.core.cpg import CPG
 from greedy.pipelines.lambda_cpg import project_snapshots_onto_basis
 from greedy.core.mcpg import mCPG
-from greedy.core.angle_greedy import AngularDefectGreedy
+from greedy.core.angle_defect_greedy import AngularDefectGreedy
 from greedy.core.reduction_common import (
     DEFAULT_DATASET,
     basis_condition_number,

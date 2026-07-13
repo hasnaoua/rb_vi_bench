@@ -252,48 +252,66 @@ converts this into a genuine per-snapshot relative-error stopping criterion. It
 is exposed as the \texttt{normalize\_snapshots} flag on \ADG{} and is off by
 default (no change for existing callers).
 
-Table~\ref{tab:norm} reports the smallest cone size $R$ at which \ADG{} first
-reaches a target worst-case relative error, with and without normalisation, when
-growth is driven by a relative-error target rather than a fixed component budget.
+Because \ADG's angle selection is provably invariant to positive per-snapshot
+rescaling, normalisation \emph{cannot} change the order in which generators are
+chosen; it changes only when the algorithm decides a snapshot is
+``resolved''. Its entire effect is therefore visible in the \emph{stopping}
+behaviour. Table~\ref{tab:norm} sweeps the relative tolerance $\varepsilon$ and
+reports, for each variant, the cone size $R$ at which growth halts and the
+worst-case relative error $\rho_{\max}$ actually achieved on the whole dataset.
 
 \begin{table}[htbp]
   \centering
-  \caption{Physics dataset: smallest cone size $R$ at which \ADG{} first attains
-    a target worst-case relative residual $\rho_{\max}$, with the stopping/selection
-    criterion fit on raw versus per-snapshot--normalised snapshots. Normalisation
-    reaches the same accuracy with $3$--$6\times$ fewer components.}
+  \caption{Physics dataset: cone size $R$ at which \ADG{} halts, and the achieved
+    worst-case relative residual $\rho_{\max}$, as a function of the relative
+    tolerance $\varepsilon$, with the stopping check fit on raw versus
+    per-snapshot--normalised snapshots. The raw variant's global-scale stopping
+    test declares the small-magnitude snapshots ``resolved'' almost immediately,
+    so it halts at $R=2$ with $\rho_{\max}\approx0.53$ for every
+    $\varepsilon\ge0.10$; only an extremely tight $\varepsilon$ forces further
+    growth, and even at $\varepsilon=0.01$ ($R=11$) it is stuck at
+    $\rho_{\max}=0.35$. The normalised variant keeps enriching until the
+    per-snapshot relative error is genuinely below $\varepsilon$, driving
+    $\rho_{\max}$ to its intrinsic floor $\approx0.143$.}
   \label{tab:norm}
-  \begin{tabular}{c c c}
+  \begin{tabular}{c cc cc}
     \toprule
-    Target $\rho_{\max}$ & \ADG{} raw ($R$) & \ADG{} normalised ($R$) \\
+    \multirow{2}{*}{$\varepsilon$}
+      & \multicolumn{2}{c}{\ADG{} raw} & \multicolumn{2}{c}{\ADG{} normalised} \\
+    \cmidrule(lr){2-3}\cmidrule(lr){4-5}
+      & $R$ & {$\rho_{\max}$} & $R$ & {$\rho_{\max}$} \\
     \midrule
-    $0.30$  & 15 & 5  \\
-    $0.20$  & 32 & 5  \\
-    $0.15$  & 32 & 8  \\
-    $\approx 0.143$ (floor) & 42 & 8--12 \\
+    $0.30$ & 2  & 0.533 & 4  & 0.294 \\
+    $0.20$ & 2  & 0.533 & 5  & 0.166 \\
+    $0.15$ & 2  & 0.533 & 7  & 0.143 \\
+    $0.10$ & 2  & 0.533 & 8  & 0.143 \\
+    $0.05$ & 3  & 0.483 & 13 & 0.143 \\
+    $0.01$ & 11 & 0.353 & 37 & 0.143 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-A complementary view comes from running the physics pipeline with an explicit
-relative target $\varepsilon = 0.15$. With normalisation, \ADG{} correctly keeps
-enriching to $R=7$ and reaches $\rho_{\max}=0.127$, whereas \CPG{} and \mCPG{}
---- whose global-scale stopping test is satisfied after a \emph{single} vector ---
-halt at $R=1$ with $\rho_{\max}=0.878$
-(Table~\ref{tab:eps}). This is the same magnitude-spread mechanism seen in the
-selection experiment, now acting on the stopping rule.
+A complementary view comes from running the physics pipeline with a single
+explicit relative target $\varepsilon = 0.15$. With normalisation, \ADG{}
+correctly keeps enriching to $R=7$ and reaches $\rho_{\max}=0.143$, whereas raw
+\ADG{} halts at $R=2$ ($\rho_{\max}=0.533$) and \CPG{} and \mCPG{} --- whose
+global-scale stopping test is satisfied after a \emph{single} vector --- halt at
+$R=1$ with $\rho_{\max}=0.878$ (Table~\ref{tab:eps}). This is the same
+magnitude-spread mechanism seen in the selection experiment, now acting on the
+stopping rule.
 
 \begin{table}[htbp]
   \centering
   \caption{Physics dataset, relative target $\varepsilon=0.15$: final cone size
     and worst-case relative error. \ADG{} with per-snapshot normalisation does not
-    stop prematurely.}
+    stop prematurely; every global-scale variant does.}
   \label{tab:eps}
   \begin{tabular}{l c S}
     \toprule
     Method & $R$ & {$\rho_{\max}$} \\
     \midrule
-    \ADG{} (normalised) & 7 & 1.2729e-1 \\
+    \ADG{} (normalised) & 7 & 1.4330e-1 \\
+    \ADG{} (raw)        & 2 & 5.3271e-1 \\
     \CPG{}              & 1 & 8.7845e-1 \\
     \mCPG{}             & 1 & 8.7845e-1 \\
     \bottomrule
@@ -321,9 +339,12 @@ opt-in flag rather than the default.
         snapshots the way the residual-based selection of \CPG/\mCPG{} does
         ($\rho_{\max}\approx0.02$ for \ADG{} vs $\approx0.52$ for the others at
         $R=30$).
-  \item \textbf{Normalisation} closes the analogous gap in \ADG's stopping rule,
-        reaching a target relative accuracy with $3$--$6\times$ fewer components on
-        the physics data, while being effectively a no-op on the lambda data.
+  \item \textbf{Normalisation} closes the analogous gap in \ADG's stopping rule:
+        without it, the global-scale stopping test halts the algorithm at $R=2$
+        with $\rho_{\max}\approx0.53$ on the physics data (small snapshots wrongly
+        declared resolved), whereas per-snapshot normalisation keeps enriching to
+        the intrinsic accuracy floor $\rho_{\max}\approx0.143$. It is effectively a
+        no-op on the well-scaled lambda data.
   \item \textbf{Overall guidance:} choose \mCPG{} for well-scaled data where
         conditioning and error-per-component matter; choose \ADG{} (with
         \texttt{normalize\_snapshots=True}) for data with a wide spread of snapshot
@@ -333,9 +354,10 @@ opt-in flag rather than the default.
 
 \paragraph{Reproducibility.}
 Lambda results: \texttt{results/lambda/component\_sweep/}. Physics baseline (fixed-$R$
-sweep): \texttt{results/physics/reduction/}. Physics \ADG{} normalisation study:
-\texttt{results/physics/reduction\_adg\_normalized/}. All numbers in this document
-are taken verbatim from the \texttt{*\_metrics.csv} and report files in those
-directories.
+sweep): \texttt{results/physics/reduction/}. Physics \ADG{} normalisation study
+(Tables~\ref{tab:norm} and~\ref{tab:eps}):
+\texttt{results/physics/adg\_normalization/} (\texttt{physics\_adg\_normalization\_stop\_points.csv},
+\texttt{physics\_eps015\_methods.csv}). All numbers in this document are taken
+verbatim from the \texttt{*\_metrics.csv} and report files in those directories.
 
 \end{document}

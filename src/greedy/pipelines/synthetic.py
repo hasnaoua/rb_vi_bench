@@ -8,7 +8,7 @@ import numpy as np
 from greedy.synthetic_data.gaussian_data import gaussian_basis, create_data
 from greedy.core.cpg import CPG
 from greedy.core.mcpg import mCPG
-from greedy.core.angle_greedy import AngularDefectGreedy
+from greedy.core.angle_defect_greedy import AngularDefectGreedy
 from greedy.pipelines.lambda_cpg import (
     project_snapshots_onto_basis,
     safe_relative_residuals,

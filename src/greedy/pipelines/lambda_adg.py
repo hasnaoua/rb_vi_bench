@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from greedy.core.angle_greedy import AngularDefectGreedy
+from greedy.core.angle_defect_greedy import AngularDefectGreedy
 from greedy.pipelines.lambda_cpg import (
     DEFAULT_DATASET,
     load_or_build_dataset,
@@ -228,6 +228,7 @@ def save_outputs(
         f"stopping_scale_max_train_norm: {stopping_scale:.18e}",
         f"absolute_stopping_tolerance: {stopping_tolerance:.18e}",
         f"snapshot_matrix_shape: {snapshots.shape}",
+        f"normalize_snapshots: {greedy.normalize_snapshots}",
         f"split_strategy: {split_strategy}",
         "validation: offline basis built on training radii only; "
         "test residuals use unseen held-out radii.",
@@ -309,6 +310,17 @@ def parse_args() -> argparse.Namespace:
         help="Projection residual stopping tolerance, same default as CPG.",
     )
     parser.add_argument(
+        "--normalize-snapshots",
+        action="store_true",
+        help=(
+            "Normalize each training snapshot to unit norm before driving the "
+            "stopping/unresolved-set check, turning epsilon into a genuine "
+            "per-snapshot relative-error tolerance. Selection order and the "
+            "stored (physical-scale) basis are provably unchanged; only which "
+            "small-magnitude snapshots still count as unresolved changes."
+        ),
+    )
+    parser.add_argument(
         "--split-strategy",
         choices=["fem-sols-paper", "fraction"],
         default="fem-sols-paper",
@@ -356,7 +368,11 @@ def main() -> None:
     train_snapshots = snapshots[train_indices]
 
     t0 = time.perf_counter()
-    greedy = AngularDefectGreedy(snapshots=train_snapshots, epsilon=args.epsilon)
+    greedy = AngularDefectGreedy(
+        snapshots=train_snapshots,
+        epsilon=args.epsilon,
+        normalize_snapshots=args.normalize_snapshots,
+    )
     greedy.compute_phases()
     elapsed = time.perf_counter() - t0
     if greedy.basis_matrix is None:
