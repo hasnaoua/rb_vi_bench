@@ -229,6 +229,7 @@ def save_outputs(
         f"absolute_stopping_tolerance: {stopping_tolerance:.18e}",
         f"snapshot_matrix_shape: {snapshots.shape}",
         f"normalize_snapshots: {greedy.normalize_snapshots}",
+        f"angle_redundancy_tol: {greedy.angle_redundancy_tol}",
         f"angle_batch_tol: {greedy.angle_batch_tol}",
         f"batch_size_history: {greedy.batch_size_history}",
         f"split_strategy: {split_strategy}",
@@ -313,13 +314,29 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--normalize-snapshots",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
             "Normalize each training snapshot to unit norm before driving the "
             "stopping/unresolved-set check, turning epsilon into a genuine "
-            "per-snapshot relative-error tolerance. Selection order and the "
-            "stored (physical-scale) basis are provably unchanged; only which "
-            "small-magnitude snapshots still count as unresolved changes."
+            "per-snapshot relative-error tolerance (standard ADG; on by default). "
+            "Selection order and the stored (physical-scale) basis are provably "
+            "unchanged; only which small-magnitude snapshots count as unresolved. "
+            "Pass --no-normalize-snapshots for the legacy global-scale criterion."
+        ),
+    )
+    parser.add_argument(
+        "--angle-redundancy-tol",
+        type=float,
+        default=0.05,
+        help=(
+            "Angular redundancy tolerance epsilon_angle in [0, 1] (standard ADG; "
+            "0.05 by default). A maximum-angle candidate is skipped if its pairwise "
+            "angle to any already-selected generator is <= arcsin(epsilon_angle) "
+            "(redundant), and the algorithm stops once every remaining unresolved "
+            "snapshot is redundant. This keeps or DIMINISHES the number of "
+            "generators R and improves conditioning at a controlled accuracy cost. "
+            "Pass 0 for the legacy behaviour (no redundancy filtering)."
         ),
     )
     parser.add_argument(
@@ -327,13 +344,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help=(
-            "Optional angular batch tolerance epsilon_angle in [0, 1]. When set, "
-            "each round considers the maximum-angle BAND (unresolved snapshots "
-            "within arcsin(epsilon_angle) of theta_max) and admits a pairwise "
-            "well-separated subset of it: a candidate joins only if its pairwise "
-            "angle to every already-admitted member exceeds arcsin(epsilon_angle). "
-            "At least one angle maximizer is always admitted. Default (unset) keeps "
-            "the original one-maximizer-per-round behaviour."
+            "Optional angular batch tolerance epsilon_angle in [0, 1] (fewer greedy "
+            "rounds, R-neutral). When set, each round admits the band of almost-max "
+            "candidates (within arcsin(epsilon_angle) of theta_max) that are pairwise "
+            "separated from each other by > arcsin(epsilon_angle). Composable with "
+            "--angle-redundancy-tol. Default (unset) adds one maximizer per round."
         ),
     )
     parser.add_argument(
@@ -388,6 +403,7 @@ def main() -> None:
         snapshots=train_snapshots,
         epsilon=args.epsilon,
         normalize_snapshots=args.normalize_snapshots,
+        angle_redundancy_tol=args.angle_redundancy_tol,
         angle_batch_tol=args.angle_batch_tol,
     )
     greedy.compute_phases()

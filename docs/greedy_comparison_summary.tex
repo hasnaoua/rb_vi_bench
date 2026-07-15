@@ -20,10 +20,10 @@
 \newcommand{\CPG}{\textsc{CPG}}
 \newcommand{\ADG}{\textsc{ADG}}
 \newcommand{\mCPG}{\textsc{mCPG}}
-\newcommand{\Rdim}{R}
+\newcommand{\eang}{\varepsilon_{\angle}}
 
-\title{Comparison of Three Greedy Positive-Cone Reduction Algorithms\\
-       on the Lambda and Physics Datasets}
+\title{Greedy Positive-Cone Reduction: from Three Baselines\\
+       to a Standard Angular-Defect Greedy}
 \author{Experimental summary}
 \date{\today}
 
@@ -31,424 +31,269 @@
 \maketitle
 
 \begin{abstract}
-This note summarises a controlled numerical comparison of three greedy
-algorithms that build a reduced \emph{positive cone}
-$K = \operatorname{span}_+\{w_1,\dots,w_R\}$ approximating a set of nonnegative
-snapshots: the Cone-Projected Greedy (\CPG), the Angular-Defect Greedy (\ADG),
-and the modified Cone-Projected Greedy (\mCPG). All three are evaluated on two
-datasets --- a low-dimensional \emph{lambda} dataset and a high-dimensional
-\emph{physics} contact dataset --- under identical snapshots, identical
-train/test conventions, and a common per-snapshot relative-error metric. We
-also report a dedicated study of the effect of \emph{per-snapshot
-normalisation} on \ADG, which is decisive on the physics dataset because of its
-very large spread of snapshot magnitudes.
+We build a reduced \emph{positive cone}
+$K=\operatorname{span}_+\{w_1,\dots,w_R\}$ approximating a set of nonnegative
+snapshots, and compare three greedy constructions --- Cone-Projected Greedy
+(\CPG), Angular-Defect Greedy (\ADG), modified \CPG\ (\mCPG) --- on a
+low-dimensional \emph{lambda} dataset and a high-dimensional \emph{physics}
+contact dataset. The note is organised as the \emph{evolution} of the method: a
+fair baseline comparison exposes two weaknesses of the raw greedy cones (poor
+worst-case relative accuracy when snapshot magnitudes vary, and severe
+ill-conditioning from near-duplicate generators); we then add two ingredients to
+\ADG\ --- \emph{per-snapshot normalisation} and an \emph{angular redundancy}
+control $\eang$ --- and fold them into a \textbf{standard \ADG}. At equal cone
+size the standard \ADG\ is $3$--$5\times$ more accurate than \CPG/\mCPG\ on the
+wide-magnitude physics data, and on the well-scaled lambda data it turns an
+otherwise catastrophic condition number ($\sim\!10^{10}$) into $\sim\!10^{1}$.
 \end{abstract}
 
 \section{Setup}
 
 \paragraph{Algorithms.}
-All three methods grow a positive cone one (or, for \ADG, one batch of)
-generator(s) at a time and project each snapshot $x$ onto the current cone via a
-nonnegative least-squares (NNLS) problem $\min_{c\ge 0}\|Ac-x\|_2$.
+All three methods grow a positive cone one generator (or, for \ADG, one batch)
+at a time and project each snapshot $x$ onto the current cone by non-negative
+least squares (NNLS), $\Pi_K(x)=\arg\min_{c\ge0}\|Ac-x\|_2$ with $A$ the
+generators.
 \begin{itemize}
-  \item \CPG{} selects, at each step, the snapshot with the largest
-        \emph{absolute} projection residual $\|x-\Pi_K(x)\|_2$ and adds that raw
-        snapshot as a generator.
-  \item \ADG{} selects the snapshot with the largest \emph{angle}
-        $\theta_K(x)=\arcsin\!\big(\|x-\Pi_K(x)\|_2/\|x\|_2\big)$ to the current
-        cone. The angle is a \emph{per-snapshot} (scale-invariant) novelty
-        measure, so \ADG's selection is intrinsically insensitive to snapshot
-        magnitude. The two initial generators are the pair of snapshots with the
-        largest mutual angle.
-  \item \mCPG{} selects like \CPG{} (largest residual) but stores a
-        \emph{shifted, re-normalised} generator
-        $\nu = (x-\Pi_K(x))/\|x-\Pi_K(x)\|_2$ instead of the raw snapshot, so
-        each generator carries only the direction that is new relative to the
-        current cone.
+  \item \CPG\ adds the snapshot of largest \emph{absolute} residual
+        $\|x-\Pi_K(x)\|_2$.
+  \item \ADG\ adds the snapshot of largest \emph{angle}
+        $\theta_K(x)=\arcsin\!\big(\|x-\Pi_K(x)\|_2/\|x\|_2\big)$ to the cone ---
+        a \emph{scale-invariant} novelty measure, so its selection is intrinsically
+        insensitive to snapshot magnitude.
+  \item \mCPG\ selects like \CPG\ but stores a shifted, re-normalised generator
+        $\nu=(x-\Pi_K(x))/\|x-\Pi_K(x)\|_2$, carrying only the direction new to the
+        cone.
 \end{itemize}
 
 \paragraph{Metric.}
-For every method we report the \emph{per-snapshot relative residual}
-\begin{equation}
-  \rho(x) \;=\; \frac{\|x-\Pi_K(x)\|_2}{\|x\|_2},
-  \qquad
-  \rho_{\max} = \max_{x\in\mathcal S}\rho(x),
-  \quad
-  \bar\rho = \operatorname{mean}_{x\in\mathcal S}\rho(x),
-\end{equation}
-evaluated by projecting the \emph{original, physical-scale} snapshots onto each
-method's final basis. Because the positive cone is invariant to positive
-per-generator rescaling, the stored basis vectors are always on the original
-scale, making this an apples-to-apples comparison regardless of how the basis
-was built. We also report the basis condition number
-$\kappa_2 = \sigma_{\max}/\sigma_{\min}$ as a measure of numerical robustness of
-the reduced representation, and the cumulative fit time.
+We report the \emph{per-snapshot relative residual}
+$\rho(x)=\|x-\Pi_K(x)\|_2/\|x\|_2$, its worst case $\rho_{\max}$ and mean
+$\bar\rho$ over the dataset, evaluated on the \emph{original, physical-scale}
+snapshots for every method, plus the basis condition number
+$\kappa_2=\sigma_{\max}/\sigma_{\min}$.
 
 \paragraph{Datasets.}
-Table~\ref{tab:datasets} lists the two datasets and, crucially, the spread of
-snapshot magnitudes $\|x\|_2$, which turns out to govern how much the choice of
-selection criterion and of normalisation matters.
+Table~\ref{tab:datasets} lists the two datasets. The magnitude ratio
+$\max_x\|x\|_2/\min_x\|x\|_2$ is the single quantity that predicts which method
+wins.
 
 \begin{table}[htbp]
   \centering
-  \caption{Datasets used in the comparison. The magnitude ratio
-    $\max_x\|x\|_2 / \min_x\|x\|_2$ (over nonzero snapshots) is the single most
-    predictive quantity for the qualitative differences observed below.}
+  \caption{Datasets. The magnitude ratio (over nonzero snapshots) governs the
+    qualitative differences below.}
   \label{tab:datasets}
   \begin{tabular}{lccccc}
     \toprule
-    Dataset & Snapshots $\times$ dim & Train/Test & $\min\|x\|_2$ & $\max\|x\|_2$
-            & Magnitude ratio \\
+    Dataset & Snapshots $\times$ dim & $\min\|x\|_2$ & $\max\|x\|_2$ & Magnitude ratio \\
     \midrule
-    Lambda  & $50 \times 57$    & $31 / 19$ (unseen params) & $0.283$ & $0.319$ & $1.13$ \\
-    Physics & $96 \times 7676$  & whole dataset             & $9.04\times10^{6}$ & $5.46\times10^{9}$ & $603.6$ \\
+    Lambda  & $50\times57$   & $0.283$            & $0.319$            & $1.13$ \\
+    Physics & $96\times7676$ & $9.04\times10^{6}$ & $5.46\times10^{9}$ & $604$  \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-For the lambda dataset the training set follows the paper grid (parameters
-$\mathrm{rad}-0.65 \in \{0.15+0.01i \mid 0\le i\le 30\}$), and relative residuals
-are reported on the $19$ unseen test parameters. For the physics contact dataset
-the whole set of $96$ snapshots (imposed displacements $0.18$--$1.01$\,mm) is used
-for both construction and evaluation.
+\section{Baseline: the three methods as-is}
 
-\section{Lambda dataset}
-
-Here all snapshot norms are within $13\%$ of each other
-(Table~\ref{tab:datasets}), so the choice of selection criterion has little
-leverage. Table~\ref{tab:lambda} shows the sweep at representative cone sizes
-$R$.
+Run at a common relative tolerance $\varepsilon=10^{-2}$ (each method stops at its
+own cone size), the raw greedy cones already reveal the two problems that motivate
+everything else (Table~\ref{tab:baseline}).
 
 \begin{table}[htbp]
   \centering
-  \caption{Lambda dataset: unseen-test relative residual, basis condition
-    number, and cumulative fit time versus cone size $R$. \CPG{} and \ADG{}
-    select nearly the same snapshots and are essentially indistinguishable in
-    accuracy and conditioning; \mCPG{} reaches markedly lower error per component
-    and keeps the basis far better conditioned.}
-  \label{tab:lambda}
-  \begin{tabular}{c l S S S c}
+  \caption{Baseline at $\varepsilon=10^{-2}$ (whole dataset). Physics: \ADG's
+    scale-invariant selection halves the worst-case error of \CPG/\mCPG. Lambda:
+    \mCPG\ is best and, crucially, \CPG/\ADG\ are numerically singular
+    ($\kappa_2\sim10^{10}$).}
+  \label{tab:baseline}
+  \begin{tabular}{l l c S S}
     \toprule
-    $R$ & Method & {$\rho_{\max}$ (test)} & {$\bar\rho$ (test)} & {$\kappa_2$}
-        & Fit [s] \\
+    Dataset & Method & $R$ & {$\rho_{\max}$} & {$\kappa_2$} \\
     \midrule
-    \multirow{3}{*}{5}
-      & \CPG  & 7.9829e-2 & 4.5361e-2 & 8.1880e1 & 1.61 \\
-      & \ADG  & 7.9829e-2 & 4.5361e-2 & 8.1880e1 & 0.13 \\
-      & \mCPG & 7.8188e-2 & 4.0711e-2 & 9.0401e0 & 0.11 \\
+    \multirow{3}{*}{Lambda}
+      & \CPG  & 23 & 1.10e-2 & 5.43e10 \\
+      & \mCPG & 15 & 8.90e-3 & 1.10e3  \\
+      & \ADG  & 23 & 1.10e-2 & 5.43e10 \\
     \midrule
-    \multirow{3}{*}{10}
-      & \CPG  & 7.1011e-2 & 4.3176e-2 & 1.5327e3 & 1.80 \\
-      & \ADG  & 7.1011e-2 & 4.3176e-2 & 1.5327e3 & 0.35 \\
-      & \mCPG & 6.5955e-2 & 3.6635e-2 & 7.9198e1 & 0.31 \\
-    \midrule
-    \multirow{3}{*}{20}
-      & \CPG  & 6.7458e-2 & 4.1852e-2 & 2.8160e10 & 2.22 \\
-      & \ADG  & 6.7458e-2 & 4.1852e-2 & 2.8160e10 & 0.93 \\
-      & \mCPG & 1.9284e-2 & 1.0132e-2 & 2.5245e10 & 0.75 \\
-    \midrule
-    \multirow{3}{*}{30}
-      & \CPG  & 6.7458e-2 & 4.1852e-2 & 4.7822e11 & 2.77 \\
-      & \ADG  & 6.7458e-2 & 4.1852e-2 & 4.7822e11 & 1.60 \\
-      & \mCPG & 6.5534e-3 & 1.4132e-3 & 7.1131e10 & 1.37 \\
+    \multirow{3}{*}{Physics}
+      & \CPG  & 9  & 8.14e-1 & 2.10e2 \\
+      & \mCPG & 9  & 8.06e-1 & 2.18e2 \\
+      & \ADG  & 11 & 3.53e-1 & 1.39e3 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\paragraph{Observations.}
-\begin{itemize}
-  \item \CPG{} and \ADG{} produce identical relative-residual and condition-number
-        curves across the sweep: with near-uniform norms, largest-residual and
-        largest-angle selection pick the same snapshots. \ADG{} is, however,
-        consistently $3$--$5\times$ faster in wall-clock fit time (batch
-        selection and cheaper closed-form angle metrics).
-  \item \mCPG{} is the clear accuracy winner: at $R=30$ its worst-case test
-        error is $6.6\times10^{-3}$, roughly one order of magnitude below \CPG/\ADG{}
-        ($6.7\times10^{-2}$), and its mean error is $\sim 30\times$ smaller.
-  \item \mCPG{} also yields much better-conditioned bases (e.g.\ $\kappa_2\approx
-        7.9\times10^{1}$ vs $1.5\times10^{3}$ at $R=10$): its shifted,
-        orthogonality-promoting generators avoid the near-duplicate directions
-        that make the raw-snapshot bases of \CPG/\ADG{} increasingly singular as
-        $R$ grows.
-\end{itemize}
+\paragraph{Two weaknesses.}
+(i) \textbf{Accuracy on wide-magnitude data.} On physics, \CPG/\mCPG\ rank
+candidates by \emph{absolute} residual, so they chase a few high-magnitude
+snapshots and leave the small-magnitude ones badly resolved
+($\rho_{\max}\approx0.8$); \ADG's angle criterion already does better ($0.35$),
+but not enough. (ii) \textbf{Conditioning.} On lambda the snapshots are nearly
+collinear, so raw-snapshot cones (\CPG, \ADG) accumulate near-parallel generators
+and become singular ($\kappa_2\approx5\times10^{10}$). The next two ideas target
+these directly, on \ADG.
 
-\section{Physics dataset}
+\section{Idea 1 --- per-snapshot normalisation}
 
-The physics snapshots span more than two orders of magnitude in norm
-(ratio $\approx 604$), because low-displacement snapshots carry almost no contact
-force while high-displacement ones are very large. This is where the
-\emph{selection criterion} becomes decisive. Table~\ref{tab:physics} reports the
-fixed-$R$ sweep (all norms measured by the per-snapshot relative residual on the
-whole dataset).
+\ADG's \emph{selection} is scale-invariant, but its \emph{stopping} rule still
+compares the absolute residual to a single global scale $\varepsilon\max_x\|x\|$.
+On wide-magnitude data this lets a small snapshot leave the ``unresolved'' set
+while still $50\%$+ wrong in relative terms. Measuring the error relative to each
+snapshot's own norm (dividing $x$ by $\|x\|$ before the stopping check, while
+still storing physical-scale generators) makes the criterion a genuine
+per-snapshot relative one. It is applied to \ADG\ \emph{only}; \CPG/\mCPG\ have
+no such option and stay on the raw snapshots.
+
+Figure~\ref{fig:norm-tail} shows the effect on physics: the raw methods leave a
+broad plateau of small-magnitude snapshots stuck near $10^{-2}$ relative error,
+while normalised \ADG\ drives them to machine precision. At $\varepsilon=10^{-2}$
+normalised \ADG\ reaches $\rho_{\max}=0.143$ (mean $3.7\times10^{-3}$) versus
+$0.35$ for raw \ADG\ and $0.81$ for \CPG/\mCPG. On lambda (uniform norms)
+normalisation is inert.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.86\linewidth]{../results/physics/adg_normalization/norm_per_snapshot_residual.png}
+  \caption{Physics, $\varepsilon=10^{-2}$: per-snapshot relative residual sorted
+    worst-first (log scale). Normalisation (applied to \ADG\ only) resolves the
+    small-magnitude snapshots that a global-scale criterion neglects, which is
+    what collapses $\rho_{\max}$.}
+  \label{fig:norm-tail}
+\end{figure}
+
+\section{Idea 2 --- angular redundancy control}
+
+Normalisation improves accuracy but not conditioning or cone size. On nearly
+collinear data \ADG\ keeps adding generators that point almost the same way,
+inflating $R$ and $\kappa_2$. The redundancy control adds a second tolerance
+$\eang$: a candidate is admitted only if its pairwise angle to \emph{every}
+existing generator exceeds $\arcsin\eang$, and enrichment stops once every
+remaining unresolved snapshot is redundant. No two generators can then lie within
+$\arcsin\eang$ of each other, so $R$ and $\kappa_2$ shrink at a controlled
+accuracy cost (Table~\ref{tab:redund}). It can only \emph{keep or diminish} $R$;
+$\eang=0$ recovers plain \ADG.
 
 \begin{table}[htbp]
   \centering
-  \caption{Physics dataset (whole set): per-snapshot relative residual and basis
-    condition number versus cone size $R$. \ADG's scale-invariant angle
-    selection dramatically outperforms the residual-based selection of \CPG{} and
-    \mCPG{}: at every $R$, largest-residual selection keeps chasing the few
-    high-magnitude snapshots and leaves the small-magnitude ones badly resolved.}
-  \label{tab:physics}
-  \begin{tabular}{c l S S S}
+  \caption{Angular redundancy on \ADG\ (lambda, $\varepsilon=10^{-2}$,
+    normalisation on). The knob trades a little worst-case accuracy for a far
+    smaller, dramatically better-conditioned cone.}
+  \label{tab:redund}
+  \begin{tabular}{l c S S}
     \toprule
-    $R$ & Method & {$\rho_{\max}$} & {$\bar\rho$} & {$\kappa_2$} \\
+    \ADG\ variant & $R$ & {$\rho_{\max}$} & {$\kappa_2$} \\
     \midrule
-    \multirow{3}{*}{5}
-      & \CPG  & 8.4334e-1 & 9.3219e-2 & 1.0249e2 \\
-      & \ADG  & 1.6577e-1 & 8.5951e-2 & 1.3039e3 \\
-      & \mCPG & 8.4334e-1 & 9.3219e-2 & 9.5842e1 \\
-    \midrule
-    \multirow{3}{*}{10}
-      & \CPG  & 8.1373e-1 & 5.5196e-2 & 2.9140e2 \\
-      & \ADG  & 8.5031e-2 & 4.3013e-2 & 1.4619e3 \\
-      & \mCPG & 8.0580e-1 & 5.2771e-2 & 2.3109e2 \\
-    \midrule
-    \multirow{3}{*}{20}
-      & \CPG  & 6.9287e-1 & 1.9835e-2 & 9.1531e2 \\
-      & \ADG  & 3.0234e-2 & 9.7557e-3 & 2.0802e3 \\
-      & \mCPG & 6.8542e-1 & 1.9272e-2 & 2.9893e2 \\
-    \midrule
-    \multirow{3}{*}{30}
-      & \CPG  & 5.2023e-1 & 9.5005e-3 & 2.5259e3 \\
-      & \ADG  & 1.8708e-2 & 4.0430e-3 & 2.3037e3 \\
-      & \mCPG & 5.1990e-1 & 9.3557e-3 & 3.6677e3 \\
+    plain ($\eang=0$)    & 23 & 1.10e-2 & 5.43e10 \\
+    $\eang=0.05$         & 7  & 3.95e-2 & 1.13e2  \\
+    $\eang=0.1$          & 2  & 7.59e-2 & 1.48e1  \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\paragraph{Observations.}
-\begin{itemize}
-  \item \ADG{} is vastly superior on worst-case relative error. At $R=30$ its
-        $\rho_{\max}=1.9\times10^{-2}$, versus $5.2\times10^{-1}$ for both \CPG{}
-        and \mCPG{} --- a factor of nearly $28$. \ADG{} reaches $\rho_{\max}<0.05$
-        by $R\approx20$, a level \CPG/\mCPG{} never attain within $30$ components.
-  \item The reason is the interaction between magnitude spread and selection
-        rule. \CPG{} and \mCPG{} rank candidates by \emph{absolute} residual, so
-        they overwhelmingly pick large-displacement snapshots and drive the mean
-        error down while leaving the small-magnitude snapshots with large
-        \emph{relative} error --- hence the stagnant $\rho_{\max}\approx 0.5$--$0.8$.
-        \ADG's angle criterion is scale-invariant and therefore attends to
-        poorly-resolved small snapshots as readily as large ones.
-  \item Note that \mCPG{}'s residual-based \emph{selection} tracks \CPG{} almost
-        exactly on $\rho_{\max}$ here; its generator shifting improves
-        conditioning on the lambda data but does not repair the
-        selection-induced blind spot to small-magnitude snapshots on the physics
-        data.
-  \item Mean error $\bar\rho$ is similar across methods --- all three drive the
-        aggregate error down --- which is precisely why $\rho_{\max}$ (not the
-        mean) is the metric that exposes the difference.
-\end{itemize}
+\section{Idea 3 --- angular batching (a cost lever)}
 
-\section{Effect of per-snapshot normalisation on \ADG}
+A third, optional knob $\eang^{\mathrm{batch}}$ admits, per round, a
+\emph{pairwise-separated batch} of the near-maximal-angle candidates instead of
+one. It leaves $R$ and accuracy essentially unchanged but cuts the number of
+greedy rounds several-fold (e.g.\ physics $9\to5$, a smooth synthetic set
+$41\to4$), which matters when the per-round NNLS projection dominates cost. It is
+orthogonal to the two ideas above and off by default.
 
-The results above concern \ADG's \emph{selection}. Its \emph{stopping} criterion,
-in contrast, still compares the absolute residual against a single global scale
-$\varepsilon\cdot\max_x\|x\|_2$. On a wide-spread dataset this lets a
-small-magnitude snapshot exit the ``unresolved'' set --- and stop influencing the
-algorithm --- while still being $50\%$+ wrong in relative terms. Per-snapshot
-normalisation (dividing each snapshot by its own norm before the
-stopping/selection logic, while still storing physical-scale generators)
-converts this into a genuine per-snapshot relative-error stopping criterion. It
-is exposed as the \texttt{normalize\_snapshots} flag on \ADG{} and is off by
-default (no change for existing callers).
+\section{The standard ADG and a fair comparison}
 
-Because \ADG's angle selection is provably invariant to positive per-snapshot
-rescaling, normalisation \emph{cannot} change the order in which generators are
-chosen; it changes only when the algorithm decides a snapshot is
-``resolved''. Its entire effect is therefore visible in the \emph{stopping}
-behaviour. Table~\ref{tab:norm} sweeps the relative tolerance $\varepsilon$ and
-reports, for each variant, the cone size $R$ at which growth halts and the
-worst-case relative error $\rho_{\max}$ actually achieved on the whole dataset.
+We define the \textbf{standard \ADG} as plain \ADG\ with per-snapshot
+normalisation on and the redundancy control $\eang$ as a single knob (default
+$0.05$). To compare it fairly against \CPG/\mCPG\ we let the standard \ADG\ choose
+the cone size $R$ (via $\eang$), then fit \CPG\ and \mCPG\ to the \emph{same} $R$
+and compare --- a matched-cone-size head-to-head
+(Figures~\ref{fig:matched-physics}, \ref{fig:matched-lambda};
+Table~\ref{tab:matched}).
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{../results/method_comparison_redundancy/matched_R_physics.png}
+  \caption{Physics: standard \ADG\ versus \CPG/\mCPG\ fit to the \emph{same} cone
+    size $R$ (chosen by \ADG's redundancy sweep). At every $R$ the standard \ADG's
+    worst-case relative error is $3$--$5\times$ lower; its condition number grows
+    slowly while \CPG/\mCPG\ blow up past $R\approx30$.}
+  \label{fig:matched-physics}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{../results/method_comparison_redundancy/matched_R_lambda.png}
+  \caption{Lambda: same matched-$R$ comparison. On well-scaled data the three are
+    close on accuracy (\mCPG\ edges ahead and stays best-conditioned); the
+    standard \ADG's value here is a compact, well-conditioned cone rather than the
+    lowest error.}
+  \label{fig:matched-lambda}
+\end{figure}
 
 \begin{table}[htbp]
   \centering
-  \caption{Physics dataset: cone size $R$ at which \ADG{} halts, and the achieved
-    worst-case relative residual $\rho_{\max}$, as a function of the relative
-    tolerance $\varepsilon$, with the stopping check fit on raw versus
-    per-snapshot--normalised snapshots. The raw variant's global-scale stopping
-    test declares the small-magnitude snapshots ``resolved'' almost immediately,
-    so it halts at $R=2$ with $\rho_{\max}\approx0.53$ for every
-    $\varepsilon\ge0.10$; only an extremely tight $\varepsilon$ forces further
-    growth, and even at $\varepsilon=0.01$ ($R=11$) it is stuck at
-    $\rho_{\max}=0.35$. The normalised variant keeps enriching until the
-    per-snapshot relative error is genuinely below $\varepsilon$, driving
-    $\rho_{\max}$ to its intrinsic floor $\approx0.143$.}
-  \label{tab:norm}
-  \begin{tabular}{c cc cc}
+  \caption{Matched cone size: worst-case relative residual $\rho_{\max}$ for the
+    standard \ADG\ (normalisation $+$ redundancy) and for \CPG/\mCPG\ fit to the
+    same $R$ ($\varepsilon=10^{-2}$, whole dataset).}
+  \label{tab:matched}
+  \begin{tabular}{l c S S S}
     \toprule
-    \multirow{2}{*}{$\varepsilon$}
-      & \multicolumn{2}{c}{\ADG{} raw} & \multicolumn{2}{c}{\ADG{} normalised} \\
-    \cmidrule(lr){2-3}\cmidrule(lr){4-5}
-      & $R$ & {$\rho_{\max}$} & $R$ & {$\rho_{\max}$} \\
+    Dataset & $R$ & {\ADG\ $\rho_{\max}$} & {\CPG\ $\rho_{\max}$} & {\mCPG\ $\rho_{\max}$} \\
     \midrule
-    $0.30$ & 2  & 0.533 & 4  & 0.294 \\
-    $0.20$ & 2  & 0.533 & 5  & 0.166 \\
-    $0.15$ & 2  & 0.533 & 7  & 0.143 \\
-    $0.10$ & 2  & 0.533 & 8  & 0.143 \\
-    $0.05$ & 3  & 0.483 & 13 & 0.143 \\
-    $0.01$ & 11 & 0.353 & 37 & 0.143 \\
+    \multirow{4}{*}{Physics}
+      & 5  & 1.66e-1 & 8.43e-1 & 8.43e-1 \\
+      & 7  & 1.43e-1 & 8.14e-1 & 8.06e-1 \\
+      & 12 & 1.43e-1 & 7.64e-1 & 7.63e-1 \\
+      & 24 & 1.43e-1 & 5.20e-1 & 5.20e-1 \\
+    \midrule
+    \multirow{4}{*}{Lambda}
+      & 2  & 7.59e-2 & 7.59e-2 & 7.59e-2 \\
+      & 7  & 3.95e-2 & 3.75e-2 & 3.66e-2 \\
+      & 21 & 1.18e-2 & 1.12e-2 & 3.50e-3 \\
+      & 26 & 9.52e-3 & 9.52e-3 & 1.00e-6 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-A complementary view comes from running the physics pipeline with a single
-explicit relative target $\varepsilon = 0.15$. With normalisation, \ADG{}
-correctly keeps enriching to $R=7$ and reaches $\rho_{\max}=0.143$, whereas raw
-\ADG{} halts at $R=2$ ($\rho_{\max}=0.533$) and \CPG{} and \mCPG{} --- whose
-global-scale stopping test is satisfied after a \emph{single} vector --- halt at
-$R=1$ with $\rho_{\max}=0.878$ (Table~\ref{tab:eps}). This is the same
-magnitude-spread mechanism seen in the selection experiment, now acting on the
-stopping rule.
-
-\begin{table}[htbp]
-  \centering
-  \caption{Physics dataset, relative target $\varepsilon=0.15$: final cone size
-    and worst-case relative error. \ADG{} with per-snapshot normalisation does not
-    stop prematurely; every global-scale variant does.}
-  \label{tab:eps}
-  \begin{tabular}{l c S}
-    \toprule
-    Method & $R$ & {$\rho_{\max}$} \\
-    \midrule
-    \ADG{} (normalised) & 7 & 1.4330e-1 \\
-    \ADG{} (raw)        & 2 & 5.3271e-1 \\
-    \CPG{}              & 1 & 8.7845e-1 \\
-    \mCPG{}             & 1 & 8.7845e-1 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\paragraph{Caveat.}
-Normalisation is \emph{data-dependent}, not a universal improvement. On the
-lambda dataset (magnitude ratio $1.13$) the raw and normalised variants are
-identical at almost every tolerance, and normalisation occasionally costs one
-extra component and a slightly worse condition number. It is therefore kept as an
-opt-in flag rather than the default.
-
-\section{Angular batching: separating near-maximal candidates}
-
-Standard \ADG{} enriches the cone one snapshot per round: it projects every
-snapshot, finds the single one at the largest angle $\theta_{\max}$ to the
-current cone, adds it, and repeats. When each NNLS cone projection is expensive,
-the number of \emph{rounds} dominates the cost. The optional
-\texttt{angle\_batch\_tol} hyperparameter $\varepsilon_{\angle}\in[0,1]$ admits a
-\emph{well-separated batch} per round instead of a single vector:
-\begin{enumerate}
-  \item \textbf{Band.} Collect every still-unresolved snapshot whose angle to the
-        cone lies within $\arcsin\varepsilon_{\angle}$ of $\theta_{\max}$ --- the
-        near-maximal candidates. (The exact-$\theta_{\max}$ set is almost always
-        a singleton on floating-point data, so a band is required for the
-        mechanism to engage at all.)
-  \item \textbf{Separate.} Traverse that band by decreasing angle-to-cone and
-        admit a candidate only if its pairwise angle to every already-admitted
-        member of the batch exceeds $\arcsin\varepsilon_{\angle}$.
-\end{enumerate}
-The maximum-angle candidate is always admitted, so $\theta_{\max}$ still decreases
-every round and the Theorem~3.5 certificate is preserved; $\varepsilon_{\angle}$
-simply lets several \emph{non-redundant} directions enter at once while refusing
-near-duplicate generators. With the default (unset) the original one-at-a-time
-behaviour is recovered exactly. Pairwise angles use snapshot directions and are
-scale-invariant, so batching composes with \texttt{normalize\_snapshots}.
-
-\begin{table}[htbp]
-  \centering
-  \caption{Effect of the angular batch tolerance $\varepsilon_{\angle}$ on \ADG{}
-    (lambda training set, $\varepsilon=10^{-2}$; physics whole set,
-    $\varepsilon=10^{-2}$). ``--'' is the default one-at-a-time \ADG{}. The
-    worst-case relative residual $\rho_{\max}$ is \emph{unchanged} at every
-    $\varepsilon_{\angle}$: batching costs no accuracy. Moderate
-    $\varepsilon_{\angle}\in[0.1,0.2]$ reaches the same (or smaller) cone size and
-    equal-or-better conditioning in a fraction of the rounds; very small
-    $\varepsilon_{\angle}$ admits near-parallel generators and inflates both $R$
-    and $\kappa_2$.}
-  \label{tab:anglebatch}
-  \begin{tabular}{l c c c S S}
-    \toprule
-    Dataset & $\varepsilon_{\angle}$ & Rounds & $R$ & {$\rho_{\max}$} & {$\kappa_2$} \\
-    \midrule
-    \multirow{5}{*}{Lambda}
-      & --   & 13 & 15 & 8.8000e-3 & 4.0150e4 \\
-      & 0.02 & 3  & 17 & 9.2000e-3 & 1.3920e9 \\
-      & 0.05 & 7  & 15 & 8.5000e-3 & 2.8580e4 \\
-      & 0.10 & 13 & 15 & 8.8000e-3 & 4.0150e4 \\
-      & 0.20 & 13 & 15 & 8.8000e-3 & 4.0150e4 \\
-    \midrule
-    \multirow{6}{*}{Physics}
-      & --   & 9 & 11 & 3.5310e-1 & 1.3950e3 \\
-      & 0.02 & 4 & 32 & 3.5310e-1 & 2.2960e4 \\
-      & 0.05 & 3 & 20 & 3.5310e-1 & 2.0950e3 \\
-      & 0.10 & 5 & 14 & 3.5310e-1 & 1.4040e3 \\
-      & 0.20 & 5 & 11 & 3.5310e-1 & 1.3530e3 \\
-      & 0.40 & 8 & 11 & 3.5310e-1 & 1.3940e3 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\paragraph{Observations.}
-\begin{itemize}
-  \item \textbf{No accuracy cost.} $\rho_{\max}$ is identical across all
-        $\varepsilon_{\angle}$ on every dataset; the maximizer-always-admitted rule
-        guarantees the same convergence as one-at-a-time \ADG{}.
-  \item \textbf{Far fewer rounds.} On physics the round count falls $9\to5$ at
-        $\varepsilon_{\angle}=0.2$ with \emph{identical} $R=11$ and slightly better
-        conditioning ($1.353\times10^{3}$ vs $1.395\times10^{3}$); on lambda
-        $13\to7$ at $\varepsilon_{\angle}=0.05$ with the same $R=15$ and lower
-        $\kappa_2$. The effect is largest on smooth synthetic data: a
-        Gaussian-mixture set ($60\times200$) that needs $41$ rounds one-at-a-time
-        resolves to the same $R=43$ at machine precision in $4$ rounds at
-        $\varepsilon_{\angle}=0.2$ (batches of up to $20$).
-  \item \textbf{A too-small tolerance backfires.} At $\varepsilon_{\angle}=0.02$
-        the separation floor is so tight that near-parallel snapshots are admitted
-        together, inflating $R$ (physics $11\to32$) and the condition number
-        (lambda $\kappa_2$ from $4.0\times10^{4}$ to $1.4\times10^{9}$). The useful
-        range is $\varepsilon_{\angle}\approx0.1$--$0.2$.
-\end{itemize}
+\paragraph{Reading the comparison.}
+On \textbf{physics} the standard \ADG\ dominates: at any cone size its worst-case
+relative error is $\approx0.14$ while \CPG/\mCPG\ sit at $0.52$--$0.84$, because
+only \ADG\ (through normalisation) attends to the small-magnitude snapshots. On
+\textbf{lambda} the three methods are close on accuracy at matched $R$; \mCPG\ is
+the best accuracy-per-component method, while the standard \ADG's contribution is
+the redundancy knob that yields a compact, well-conditioned cone
+(Table~\ref{tab:redund}).
 
 \section{Conclusions}
 
 \begin{itemize}
-  \item \textbf{When snapshot magnitudes are uniform (lambda):} \CPG{} and \ADG{}
-        are essentially equivalent in accuracy (\ADG{} faster to fit); \mCPG{} is
-        the best method, delivering roughly an order-of-magnitude lower worst-case
-        error and substantially better-conditioned bases thanks to its shifted,
-        orthogonality-promoting generators.
-  \item \textbf{When snapshot magnitudes span orders of magnitude (physics):}
-        \ADG{} is decisively best on worst-case relative error, because its angle
-        selection is scale-invariant and does not neglect small-magnitude
-        snapshots the way the residual-based selection of \CPG/\mCPG{} does
-        ($\rho_{\max}\approx0.02$ for \ADG{} vs $\approx0.52$ for the others at
-        $R=30$).
-  \item \textbf{Normalisation} closes the analogous gap in \ADG's stopping rule:
-        without it, the global-scale stopping test halts the algorithm at $R=2$
-        with $\rho_{\max}\approx0.53$ on the physics data (small snapshots wrongly
-        declared resolved), whereas per-snapshot normalisation keeps enriching to
-        the intrinsic accuracy floor $\rho_{\max}\approx0.143$. It is effectively a
-        no-op on the well-scaled lambda data.
-  \item \textbf{Angular batching} ($\varepsilon_{\angle}\approx0.1$--$0.2$) is a
-        cost, not accuracy, lever for \ADG{}: it collapses the number of greedy
-        rounds several-fold (physics $9\to5$, a synthetic set $41\to4$) at
-        identical $\rho_{\max}$ and equal-or-better conditioning, by admitting a
-        pairwise-separated batch of near-maximal candidates per round instead of
-        one. It is off by default and never degrades the result when a sensible
-        tolerance is used.
-  \item \textbf{Overall guidance:} choose \mCPG{} for well-scaled data where
-        conditioning and error-per-component matter; choose \ADG{} (with
-        \texttt{normalize\_snapshots=True}) for data with a wide spread of snapshot
-        magnitudes where uniform \emph{relative} accuracy across all snapshots is
-        the goal, and add \texttt{angle\_batch\_tol} when the per-round cone
-        projection makes the round count the bottleneck.
+  \item \textbf{Baseline.} Raw greedy cones have two failure modes: poor
+        worst-case relative accuracy when snapshot magnitudes vary (\CPG/\mCPG\ on
+        physics), and near-singular bases from redundant generators (\CPG/\ADG\ on
+        lambda).
+  \item \textbf{Normalisation} fixes the first for \ADG: on physics it cuts the
+        worst-case relative error from $0.35$ (raw \ADG) / $0.81$ (\CPG/\mCPG) to
+        $0.14$; it is inert on uniform-magnitude data.
+  \item \textbf{Angular redundancy} fixes the second: it shrinks $R$ and turns the
+        lambda cone's $\kappa_2\approx5\times10^{10}$ into $\sim\!10^{2}$
+        ($\sim\!10^{1}$ at $R=2$), for a modest accuracy cost, and reduces $R$ for
+        free on physics.
+  \item \textbf{Standard \ADG} (normalisation $+$ redundancy) is best on
+        wide-magnitude data at every matched cone size ($3$--$5\times$ lower
+        $\rho_{\max}$ than \CPG/\mCPG); on well-scaled data \mCPG\ leads on accuracy
+        while the standard \ADG\ offers a compact, well-conditioned alternative.
+        \emph{Guidance:} use the standard \ADG\ for data with a wide spread of
+        snapshot magnitudes or when a small, well-conditioned cone matters; use
+        \mCPG\ for well-scaled data where error-per-component is paramount; add the
+        batching knob when the round count is the bottleneck.
 \end{itemize}
 
 \paragraph{Reproducibility.}
-Lambda results: \texttt{results/lambda/component\_sweep/}. Physics baseline (fixed-$R$
-sweep): \texttt{results/physics/reduction/}. Physics \ADG{} normalisation study
-(Tables~\ref{tab:norm} and~\ref{tab:eps}):
-\texttt{results/physics/adg\_normalization/} (\texttt{physics\_adg\_normalization\_stop\_points.csv},
-\texttt{physics\_eps015\_methods.csv}). Angular-batching study
-(Table~\ref{tab:anglebatch}): \texttt{results/angle\_batch\_study/}
-(\texttt{angle\_batch\_metrics.csv}), with a full pipeline run at
-$\varepsilon_{\angle}=0.05$ in \texttt{results/lambda/adg\_anglebatch/}. All
-numbers in this document are taken verbatim from the \texttt{*\_metrics.csv} and
-report files in those directories.
+Baseline / standard-\ADG\ comparison:
+\texttt{results/method\_comparison\_redundancy/} (\texttt{new\_adg\_vs\_cpg\_mcpg.csv},
+\texttt{matched\_R\_metrics.csv}, \texttt{matched\_R\_\{lambda,physics\}.png}).
+Normalisation study: \texttt{results/physics/adg\_normalization/} and
+\texttt{results/lambda/adg\_normalization/}. Per-run standard-\ADG\ figure suites:
+\texttt{results/lambda/adg\_standard/} and \texttt{results/physics/adg\_standard/}.
+All numbers are taken verbatim from the \texttt{*.csv} and report files there.
 
 \end{document}

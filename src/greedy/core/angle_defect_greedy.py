@@ -52,22 +52,26 @@ class AngularDefectGreedy:
     flag, since span_+ is likewise invariant to positive per-generator
     scaling.
 
-    ``angle_batch_tol`` (epsilon_angle) turns each greedy round into a
-    pairwise-separated batch. With the default ``None`` a round admits only the
-    snapshots at exactly theta_max (the original behaviour). When
-    ``angle_batch_tol`` is set to a value in ``[0, 1]`` the round instead
-    considers the whole maximum-angle *band* -- every unresolved snapshot whose
-    angle to the current cone is within ``arcsin(epsilon_angle)`` of theta_max
-    -- and traverses it by decreasing angle-to-cone, admitting a candidate only
-    if its pairwise angle to every already-admitted member exceeds
-    ``arcsin(epsilon_angle)``. The leading (maximum-angle) candidate is always
-    admitted, so at least one maximizer enters and theta_max still decreases
-    every round (the Theorem 3.5 certificate is preserved). The band makes the
-    mechanism engage on generic floating-point data (where exact ties never
-    occur); the separation keeps just a well-separated subset, so several
-    non-redundant directions enter per round -- far fewer greedy rounds at equal
-    accuracy -- without admitting near-duplicate maximizers that would inflate R
-    and worsen the basis condition number.
+    Two independent angular knobs act on each round (both default ``None`` =
+    original behaviour; both take a value in ``[0, 1]``; they may be combined):
+
+    * ``angle_redundancy_tol`` (a *diminish-R* filter). An unresolved snapshot is
+      eligible only if its pairwise angle to *every already-selected generator*
+      exceeds ``arcsin(angle_redundancy_tol)``; those nearly parallel to an
+      existing generator are dropped as redundant, and enrichment stops once every
+      remaining unresolved snapshot is redundant. R and the basis condition number
+      shrink at a controlled accuracy cost (worst-case error may rise). Because a
+      maximizer can be dropped, the Theorem 3.5 certificate is guaranteed only when
+      this is ``None``.
+    * ``angle_batch_tol`` (a *fewer-rounds* filter, R-neutral). Within each round
+      it takes the band of almost-max-angle eligible candidates (angle within
+      ``arcsin(angle_batch_tol)`` of theta_max) and admits a subset that is
+      pairwise separated *from each other* by more than ``arcsin(angle_batch_tol)``
+      -- several non-redundant directions enter at once, cutting the number of
+      greedy rounds without changing the accuracy or (materially) R.
+
+    Pairwise angles use snapshot *directions* and are scale-invariant, so both
+    filters compose with ``normalize_snapshots``.
     """
 
     def __init__(
@@ -77,6 +81,7 @@ class AngularDefectGreedy:
         *,
         zero_tol: float = 1e-14,
         normalize_snapshots: bool = False,
+        angle_redundancy_tol: float | None = None,
         angle_batch_tol: float | None = None,
     ):
         snapshots = np.asarray(snapshots, dtype=float)
@@ -86,6 +91,8 @@ class AngularDefectGreedy:
             )
         if epsilon < 0.0:
             raise ValueError("epsilon must be non-negative")
+        if angle_redundancy_tol is not None and not (0.0 <= angle_redundancy_tol <= 1.0):
+            raise ValueError("angle_redundancy_tol (epsilon_angle) must be in [0, 1]")
         if angle_batch_tol is not None and not (0.0 <= angle_batch_tol <= 1.0):
             raise ValueError("angle_batch_tol (epsilon_angle) must be in [0, 1]")
 
@@ -93,7 +100,12 @@ class AngularDefectGreedy:
         self.epsilon = float(epsilon)
         self.zero_tol = float(zero_tol)
         self.normalize_snapshots = bool(normalize_snapshots)
-        self.angle_batch_tol = None if angle_batch_tol is None else float(angle_batch_tol)
+        self.angle_redundancy_tol = (
+            None if angle_redundancy_tol is None else float(angle_redundancy_tol)
+        )
+        self.angle_batch_tol = (
+            None if angle_batch_tol is None else float(angle_batch_tol)
+        )
 
         # Snapshots used to drive selection/stopping (candidate angle,
         # unresolved-set membership, stopping_scale/tolerance). When
@@ -134,8 +146,9 @@ class AngularDefectGreedy:
         self.candidate_residual_history: list[float] = []
 
         # Number of snapshots admitted per enrichment round (one entry per
-        # completed round). With angle_batch_tol=None this is the tied-maximizer
-        # count; with a separation tolerance it is the well-separated batch size.
+        # completed round). With angle_redundancy_tol=None this is the
+        # tied-maximizer count; with the redundancy filter each round admits one
+        # non-redundant generator, so entries are 1.
         self.batch_size_history: list[int] = []
 
         # Theorem 3.5 (angular defect controls the global error) certificate,
@@ -345,61 +358,78 @@ class AngularDefectGreedy:
         )
         return [int(index) for index in np.flatnonzero(tied)]
 
-    def _band_angle_candidates(
+    def _drop_redundant(self, indices: np.ndarray) -> np.ndarray:
+        """
+        angle_redundancy_tol filter (diminish-R): drop candidates nearly parallel
+        to an existing generator.
+
+        Return the subset of ``indices`` whose pairwise angle to *every*
+        already-selected generator exceeds ``arcsin(angle_redundancy_tol)``. An
+        empty result means every remaining candidate is redundant, which signals
+        ``compute_phases`` to stop enriching. Pairwise angles use snapshot
+        directions and are scale-invariant.
+        """
+        if not self.selected_indices or indices.size == 0:
+            return indices
+        min_separation = float(np.arcsin(np.clip(self.angle_redundancy_tol, 0.0, 1.0)))
+        selected = self._fit_snapshots[np.array(self.selected_indices, dtype=int)]
+        selected_norms = np.linalg.norm(selected, axis=1, keepdims=True)
+        selected_units = np.divide(
+            selected,
+            selected_norms,
+            out=np.zeros_like(selected),
+            where=selected_norms > self.zero_tol,
+        )
+        kept: list[int] = []
+        for index in indices:
+            v = self._fit_snapshots[index]
+            norm = float(np.linalg.norm(v))
+            if norm <= self.zero_tol:
+                continue
+            unit = v / norm
+            cosines = np.clip(selected_units @ unit, -1.0, 1.0)
+            if float(np.min(np.arccos(cosines))) > min_separation:
+                kept.append(int(index))
+        return np.asarray(kept, dtype=int)
+
+    def _exact_max_candidates(
         self,
-        residuals: np.ndarray,
+        eligible: np.ndarray,
+        angles: np.ndarray,
+    ) -> list[int]:
+        """Default per-round selection: the snapshots at exactly theta_max."""
+        if eligible.size == 0:
+            return []
+        theta_max = float(np.max(angles[eligible]))
+        tied = eligible[
+            np.isclose(
+                angles[eligible],
+                theta_max,
+                rtol=1e-12,
+                atol=max(self.zero_tol, 1e-14),
+            )
+        ]
+        return [int(index) for index in tied]
+
+    def _band_pairwise_candidates(
+        self,
+        eligible: np.ndarray,
         angles: np.ndarray,
     ) -> list[int]:
         """
-        Maximum-angle *band* for one enrichment round.
-
-        Unlike ``_next_angle_candidates`` (which returns only the snapshots at
-        exactly theta_max, and is therefore almost always a singleton on
-        floating-point data), this returns every still-unresolved snapshot whose
-        angle to the current cone is within ``arcsin(angle_batch_tol)`` of
-        theta_max. That band is what the pairwise-separation filter then thins,
-        so the batch mechanism actually engages on generic datasets.
+        angle_batch_tol selection (fewer-rounds): from the eligible pool take the
+        band of almost-max-angle candidates (angle within
+        ``arcsin(angle_batch_tol)`` of theta_max) and admit a subset that is
+        pairwise separated FROM EACH OTHER by more than ``arcsin(angle_batch_tol)``,
+        traversed max-angle first. This adds several non-redundant directions per
+        round (fewer rounds) without inflating R materially.
         """
-        unresolved = residuals > self.stopping_tolerance
-        if self.selected_indices:
-            unresolved[np.array(self.selected_indices, dtype=int)] = False
-        if not np.any(unresolved):
+        if eligible.size == 0:
             return []
-        theta_max = float(np.max(np.where(unresolved, angles, -np.inf)))
-        if not np.isfinite(theta_max):
-            return []
-        band = float(np.arcsin(np.clip(self.angle_batch_tol, 0.0, 1.0)))
-        in_band = unresolved & (angles >= theta_max - band)
-        return [int(index) for index in np.flatnonzero(in_band)]
-
-    def _separate_candidates(
-        self,
-        candidates: list[int],
-        angles: np.ndarray,
-    ) -> list[int]:
-        """
-        Pairwise-separation filter applied *after* the base maximum-angle
-        selection.
-
-        The base algorithm is left untouched: it still returns the snapshots at
-        the largest angle to the current cone (``_next_angle_candidates``). This
-        filter merely refuses to admit all of them at once. The candidates are
-        traversed by decreasing angle-to-cone and one is admitted only if its
-        pairwise angle to every already-admitted candidate exceeds
-        ``arcsin(angle_batch_tol)``. The leading (maximum-angle) candidate is
-        always admitted, so at least one maximizer enters every round and the
-        Theorem 3.5 certificate is preserved. Pairwise angles use snapshot
-        *directions* and are therefore scale-invariant (identical whether or not
-        ``normalize_snapshots`` is set).
-        """
-        if len(candidates) <= 1:
-            return list(candidates)
-
-        cand = np.asarray(candidates, dtype=int)
-        # Decreasing angle-to-cone so a maximizer leads and is admitted first.
-        order = cand[np.argsort(angles[cand], kind="stable")[::-1]]
-        min_separation = float(np.arcsin(np.clip(self.angle_batch_tol, 0.0, 1.0)))
-
+        sep = float(np.arcsin(np.clip(self.angle_batch_tol, 0.0, 1.0)))
+        theta_max = float(np.max(angles[eligible]))
+        band = eligible[angles[eligible] >= theta_max - sep]
+        order = band[np.argsort(angles[band], kind="stable")[::-1]]
         admitted: list[int] = []
         admitted_units: list[np.ndarray] = []
         for candidate in order:
@@ -410,15 +440,11 @@ class AngularDefectGreedy:
             unit = v / norm
             if admitted:
                 cosines = np.clip(np.asarray(admitted_units) @ unit, -1.0, 1.0)
-                # Pairwise angle to the closest already-admitted candidate must
-                # strictly exceed the separation floor to be admitted.
-                if float(np.min(np.arccos(cosines))) <= min_separation:
+                if float(np.min(np.arccos(cosines))) <= sep:
                     continue
             admitted.append(int(candidate))
             admitted_units.append(unit)
-
-        # Guarantee at least one maximizer even if every candidate was degenerate.
-        return admitted if admitted else [int(order[0])]
+        return admitted
 
     # ------------------------------------------------------------------
     # Main algorithm
@@ -449,21 +475,35 @@ class AngularDefectGreedy:
         self.relative_residual_history.append(max_residual / self.stopping_scale)
 
         while True:
+            unresolved_mask = residuals > self.stopping_tolerance
+            if self.selected_indices:
+                unresolved_mask[np.array(self.selected_indices, dtype=int)] = False
+            eligible = np.flatnonzero(unresolved_mask)
+            if eligible.size == 0:
+                break  # every snapshot resolved -> normal stop
+
+            # theta_max is the largest angle over the still-unresolved set (the
+            # worst remaining direction), used for the certificate histories. In
+            # redundancy mode the admitted candidate need not attain it (a
+            # redundant maximizer may be dropped), so the Theorem 3.5 certificate
+            # is guaranteed only when angle_redundancy_tol is None.
+            theta_max = float(np.max(angles[eligible]))
+
+            # (1) diminish-R knob: keep only candidates that are not redundant
+            # w.r.t. the existing generators; stop if all remaining are redundant.
+            if self.angle_redundancy_tol is not None:
+                eligible = self._drop_redundant(eligible)
+                if eligible.size == 0:
+                    break
+
+            # (2) fewer-rounds knob: per-round selection from the eligible pool.
             if self.angle_batch_tol is None:
-                # Base algorithm (unchanged): snapshots at the largest angle to
-                # the current cone among the still-unresolved set.
-                candidates = self._next_angle_candidates(residuals, angles)
+                candidates = self._exact_max_candidates(eligible, angles)
             else:
-                # Widen the maximum-angle selection to a band within
-                # arcsin(angle_batch_tol) of theta_max, then keep only a
-                # pairwise angularly-separated subset of that band.
-                candidates = self._separate_candidates(
-                    self._band_angle_candidates(residuals, angles), angles
-                )
+                candidates = self._band_pairwise_candidates(eligible, angles)
             if not candidates:
                 break
 
-            theta_max = float(np.max(angles[candidates]))
             sigma = float(np.sin(theta_max))
             self.theta_max_history.append(theta_max)
             self.sigma_history.append(sigma)

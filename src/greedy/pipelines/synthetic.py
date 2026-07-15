@@ -208,7 +208,13 @@ def run_experiments(
             )
 
             t0 = time.perf_counter()
-            adg = AngularDefectGreedy(snapshots=train_snapshots, epsilon=float(eps))
+            # Standard ADG: per-snapshot normalization + angular redundancy.
+            adg = AngularDefectGreedy(
+                snapshots=train_snapshots,
+                epsilon=float(eps),
+                normalize_snapshots=True,
+                angle_redundancy_tol=0.05,
+            )
             adg.compute_phases()
             elapsed = time.perf_counter() - t0
             basis_mat = (

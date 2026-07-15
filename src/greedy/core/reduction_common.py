@@ -1131,6 +1131,7 @@ def plot_summary(
     output_path: Path,
     *,
     method_name: str,
+    dataset_label: str = "lambda snapshots",
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(2, 2, figsize=(14, 8.5))
@@ -1160,7 +1161,7 @@ def plot_summary(
     axes[1, 1].set_ylabel("component")
     fig.colorbar(image, ax=axes[1, 1], pad=0.012, label="basis value")
 
-    fig.suptitle(f"{method_name} on lambda snapshots: R={basis.shape[0]}")
+    fig.suptitle(f"{method_name} on {dataset_label}: R={basis.shape[0]}")
     fig.tight_layout()
     fig.savefig(output_path, dpi=180)
     plt.close(fig)

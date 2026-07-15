@@ -70,29 +70,44 @@ def _metadata_float(metadata: dict[str, str], *keys: str) -> float:
         return float("nan")
 
 
-def method_specs(args: argparse.Namespace) -> list[tuple[str, Path, Path]]:
+def method_specs(args: argparse.Namespace) -> list[tuple[str, Path, Path, Path]]:
     return [
-        ("CPG", args.cpg_reconstructions, args.cpg_report),
-        ("Angular Defect Greedy", args.angle_reconstructions, args.angle_report),
-        ("mCPG", args.mcpg_reconstructions, args.mcpg_report),
+        ("CPG", args.cpg_reconstructions, args.cpg_report, args.cpg_basis),
+        ("Angular Defect Greedy", args.angle_reconstructions, args.angle_report, args.angle_basis),
+        ("mCPG", args.mcpg_reconstructions, args.mcpg_report, args.mcpg_basis),
     ]
+
+
+def basis_condition_and_size(path: Path) -> tuple[float, int]:
+    """Condition number and generator count of a saved basis (NaN/0 if missing)."""
+    if path is None or not path.exists():
+        return float("nan"), 0
+    basis = np.load(path, allow_pickle=False)
+    basis = np.asarray(basis, dtype=float)
+    if basis.ndim != 2 or basis.shape[0] < 1:
+        return float("nan"), int(basis.shape[0]) if basis.ndim == 2 else 0
+    kappa = float(np.linalg.cond(basis)) if basis.shape[0] > 1 else 1.0
+    return kappa, int(basis.shape[0])
 
 
 def gather_results(
     snapshots: np.ndarray,
-    specs: list[tuple[str, Path, Path]],
+    specs: list[tuple[str, Path, Path, Path]],
 ) -> dict[str, dict[str, np.ndarray]]:
     results: dict[str, dict[str, np.ndarray]] = {}
-    for name, path, report_path in specs:
+    for name, path, report_path, basis_path in specs:
         reconstruction = load_reconstruction(path, snapshots)
         if reconstruction is None:
             continue
         residuals, relative = residual_metrics(snapshots, reconstruction)
+        kappa, basis_R = basis_condition_and_size(basis_path)
         results[name] = {
             "reconstruction": reconstruction,
             "residuals": residuals,
             "relative": relative,
             "metadata": parse_report(report_path),
+            "kappa": kappa,
+            "basis_R": basis_R,
         }
     return results
 
@@ -110,6 +125,8 @@ def write_metrics(
             [
                 "method",
                 "component_or_selected_count",
+                "basis_R",
+                "condition_number",
                 "elapsed_seconds",
                 "max_residual",
                 "mean_residual",
@@ -136,6 +153,8 @@ def write_metrics(
                 [
                     method,
                     _metadata_value(metadata, "selected_count_R", "component_count_R"),
+                    values.get("basis_R", 0),
+                    f"{values.get('kappa', float('nan')):.6e}",
                     _metadata_value(metadata, "elapsed_seconds"),
                     f"{float(np.max(residuals)):.18e}",
                     f"{float(np.mean(residuals)):.18e}",
@@ -380,6 +399,24 @@ def parse_args() -> argparse.Namespace:
         help="mCPG report file with elapsed time and selected snapshots.",
     )
     parser.add_argument(
+        "--cpg-basis",
+        type=Path,
+        default=Path("results/lambda/cpg/cpg_basis.npy"),
+        help="CPG basis array (for condition number / R).",
+    )
+    parser.add_argument(
+        "--angle-basis",
+        type=Path,
+        default=Path("results/lambda/adg/adg_basis.npy"),
+        help="ADG basis array (for condition number / R).",
+    )
+    parser.add_argument(
+        "--mcpg-basis",
+        type=Path,
+        default=Path("results/lambda/mcpg/mcpg_basis.npy"),
+        help="mCPG basis array (for condition number / R).",
+    )
+    parser.add_argument(
         "--max-examples",
         type=int,
         default=5,
@@ -465,7 +502,8 @@ def main() -> None:
         relative = values["relative"]
         test_relative = relative[test_indices] if test_indices.size else relative
         print(
-            f"{method}: max residual={float(np.max(residuals)):.6e}, "
+            f"{method}: R={values.get('basis_R', 0)}, "
+            f"kappa={values.get('kappa', float('nan')):.3e}, "
             f"test max relative={float(np.max(test_relative)):.6e}, "
             f"test mean relative={float(np.mean(test_relative)):.6e}"
         )
