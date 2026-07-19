@@ -73,6 +73,7 @@ def create_data(
     num_fields: int = 100,
     noise_level: float = 0.0,
     min_value: float = 0.0,
+    rng: np.random.Generator | int | None = None,
 ) -> np.ndarray:
     """
     Generate synthetic data by random linear combinations of basis functions.
@@ -87,6 +88,16 @@ def create_data(
         Standard deviation of added Gaussian noise.
     min_value : float, optional
         Minimum value for clipping.
+    rng : np.random.Generator or int, optional
+        Generator (or seed) for the coefficients and noise. Pass one to make the
+        dataset reproducible.
+
+        This used to draw from the unseeded global ``np.random``, which silently
+        made every caller irreproducible: ``pipelines.synthetic`` takes an
+        ``rng_seed`` and seeds its own generator, but that only ever controlled
+        the train/test shuffle -- the snapshots themselves were freshly random on
+        every run, so no synthetic result could be reproduced or re-checked.
+        ``None`` keeps the old unseeded behaviour for any caller that wants it.
 
     Returns
     -------
@@ -94,12 +105,13 @@ def create_data(
         Synthetic data of shape (num_fields, num_points).
     """
     num_basis, _ = basis_functions.shape
+    generator = np.random.default_rng(rng) if not isinstance(rng, np.random.Generator) else rng
 
-    coefficients = np.random.uniform(size=(num_fields, num_basis))
+    coefficients = generator.uniform(size=(num_fields, num_basis))
     data = coefficients @ basis_functions
 
     if noise_level > 0:
-        data += np.random.normal(scale=noise_level, size=data.shape)
+        data += generator.normal(scale=noise_level, size=data.shape)
 
     np.clip(data, min_value, None, out=data)
     return data

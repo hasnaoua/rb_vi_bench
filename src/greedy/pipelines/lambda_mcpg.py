@@ -2,15 +2,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 import time
 from pathlib import Path
-
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np

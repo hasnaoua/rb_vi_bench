@@ -2,15 +2,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 import time
 from pathlib import Path
-
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -229,8 +222,6 @@ def save_outputs(
         f"absolute_stopping_tolerance: {stopping_tolerance:.18e}",
         f"snapshot_matrix_shape: {snapshots.shape}",
         f"normalize_snapshots: {greedy.normalize_snapshots}",
-        f"angle_redundancy_tol: {greedy.angle_redundancy_tol}",
-        f"angle_batch_tol: {greedy.angle_batch_tol}",
         f"batch_size_history: {greedy.batch_size_history}",
         f"split_strategy: {split_strategy}",
         "validation: offline basis built on training radii only; "
@@ -326,32 +317,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--angle-redundancy-tol",
-        type=float,
-        default=0.05,
-        help=(
-            "Angular redundancy tolerance epsilon_angle in [0, 1] (standard ADG; "
-            "0.05 by default). A maximum-angle candidate is skipped if its pairwise "
-            "angle to any already-selected generator is <= arcsin(epsilon_angle) "
-            "(redundant), and the algorithm stops once every remaining unresolved "
-            "snapshot is redundant. This keeps or DIMINISHES the number of "
-            "generators R and improves conditioning at a controlled accuracy cost. "
-            "Pass 0 for the legacy behaviour (no redundancy filtering)."
-        ),
-    )
-    parser.add_argument(
-        "--angle-batch-tol",
-        type=float,
-        default=None,
-        help=(
-            "Optional angular batch tolerance epsilon_angle in [0, 1] (fewer greedy "
-            "rounds, R-neutral). When set, each round admits the band of almost-max "
-            "candidates (within arcsin(epsilon_angle) of theta_max) that are pairwise "
-            "separated from each other by > arcsin(epsilon_angle). Composable with "
-            "--angle-redundancy-tol. Default (unset) adds one maximizer per round."
-        ),
-    )
-    parser.add_argument(
         "--split-strategy",
         choices=["fem-sols-paper", "fraction"],
         default="fem-sols-paper",
@@ -403,8 +368,6 @@ def main() -> None:
         snapshots=train_snapshots,
         epsilon=args.epsilon,
         normalize_snapshots=args.normalize_snapshots,
-        angle_redundancy_tol=args.angle_redundancy_tol,
-        angle_batch_tol=args.angle_batch_tol,
     )
     greedy.compute_phases()
     elapsed = time.perf_counter() - t0

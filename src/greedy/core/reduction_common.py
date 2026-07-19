@@ -1,17 +1,11 @@
 from __future__ import annotations
 
 import csv
-import os
 from pathlib import Path
-
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.linalg as la
 from scipy.optimize import Bounds, LinearConstraint, lsq_linear, minimize, nnls
 
 try:
@@ -20,6 +14,21 @@ try:
     cvxopt.solvers.options["show_progress"] = False
 except ImportError:  # cvxopt is optional; mCPG falls back to scipy/NNLS.
     cvxopt = None
+
+def row_map(function, rows):
+    """
+    Apply ``function`` to each row of ``rows``, in order.
+
+    Deliberately serial. This used to dispatch through ``joblib.Parallel``, but
+    each per-row NNLS solve costs microseconds while joblib pickles the basis
+    matrix and pays inter-process latency per row, so the parallel version lost
+    on every workload here -- measured serial vs joblib, identical results:
+    hertz_a (31x51) 264x faster serial, hertz (81x47) 21x, membrane (125x885)
+    5.5x, and physics-scale (96x7676) 6.6x. Re-parallelising is only worth
+    revisiting if a single projection ever becomes expensive enough to dominate
+    that overhead; measure before assuming it does.
+    """
+    return [function(row) for row in rows]
 
 
 def _apply_publication_style() -> None:
@@ -157,10 +166,12 @@ def solve_cone_shift_projection(
     *,
     upper_tol: float = 1e-9,
     maxiter: int | None = None,
+    cone_system: np.ndarray | None = None,
+    cone_vector: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Solve  min_{c >= 0}  ||system @ c - vector||_2
-           s.t.           system @ c <= vector + upper_tol   (elementwise)
+           s.t.           cone_system @ c <= cone_vector + upper_tol   (elementwise)
 
     This is the constrained cone-shift projection used by the mCPG algorithm
     (Niakh, Drouet, Ehrlacher & Ern, 2022, Algorithm 2):
@@ -169,6 +180,15 @@ def solve_cone_shift_projection(
     ``vector`` is theta_qr. The elementwise upper bound keeps
     theta_qr - Upsilon inside the positive cone W^+ (here: the nonnegative
     orthant), unlike plain NNLS which only constrains the coefficients.
+
+    ``cone_system``/``cone_vector`` default to ``system``/``vector`` and only
+    differ when the objective is measured in a non-Euclidean inner product.
+    Minimising ||.||_W is done by passing the Cholesky-transformed pair
+    (U @ A, U @ theta) as system/vector, but "theta - Upsilon stays in W^+" is
+    an elementwise statement about the *physical* dual coefficients, and
+    elementwise-nonnegative is not preserved by U. Passing the untransformed
+    (A, theta) here keeps that membership test in the coordinates where it is
+    actually meaningful.
 
     Solved as a QP with cvxopt when available; falls back to scipy SLSQP,
     and finally to plain NNLS (ignoring the upper bound) if both fail.
@@ -186,6 +206,23 @@ def solve_cone_shift_projection(
     if system.shape[1] == 0:
         return np.zeros(0, dtype=float)
 
+    constraint_system = system if cone_system is None else np.asarray(cone_system, dtype=float)
+    constraint_vector = vector if cone_vector is None else np.asarray(cone_vector, dtype=float)
+    if constraint_system.ndim != 2:
+        raise ValueError(f"cone_system must be 2-D, got shape {constraint_system.shape}")
+    if constraint_vector.ndim != 1:
+        raise ValueError(f"cone_vector must be 1-D, got shape {constraint_vector.shape}")
+    if constraint_system.shape[1] != system.shape[1]:
+        raise ValueError(
+            f"cone_system columns ({constraint_system.shape[1]}) must match "
+            f"system columns ({system.shape[1]})"
+        )
+    if constraint_system.shape[0] != constraint_vector.shape[0]:
+        raise ValueError(
+            f"cone_system rows ({constraint_system.shape[0]}) must match "
+            f"cone_vector length ({constraint_vector.shape[0]})"
+        )
+
     k = system.shape[1]
 
     if cvxopt is not None:
@@ -194,8 +231,8 @@ def solve_cone_shift_projection(
             ridge = 1e-10 * (float(np.trace(gram)) / k if k > 0 else 1.0)
             gram = gram + ridge * np.eye(k)
             linear = -(system.T @ vector)
-            G = np.vstack([-np.eye(k), system])
-            h = np.concatenate([np.zeros(k), vector + upper_tol])
+            G = np.vstack([-np.eye(k), constraint_system])
+            h = np.concatenate([np.zeros(k), constraint_vector + upper_tol])
 
             solution = cvxopt.solvers.qp(
                 cvxopt.matrix(gram),
@@ -222,7 +259,9 @@ def solve_cone_shift_projection(
             np.zeros(k),
             jac=gradient,
             bounds=Bounds(np.zeros(k), np.full(k, np.inf)),
-            constraints=[LinearConstraint(system, -np.inf, vector + upper_tol)],
+            constraints=[
+                LinearConstraint(constraint_system, -np.inf, constraint_vector + upper_tol)
+            ],
             method="SLSQP",
             options={"maxiter": 200 if maxiter is None else maxiter},
         )
@@ -232,6 +271,35 @@ def solve_cone_shift_projection(
         pass
 
     return solve_nonnegative_least_squares(system, vector, maxiter=maxiter)
+
+
+def gram_cholesky(gram: np.ndarray, *, jitter: float = 1e-12) -> np.ndarray:
+    """
+    Upper-triangular U with ``gram = U.T @ U``, so that ``||x||_W = ||U @ x||_2``.
+
+    This is what lets the Euclidean CPG / AngularDefectGreedy / mCPG in this
+    package run in a non-Euclidean dual inner product without touching their
+    selection logic: a cone combination transforms as U @ (A c) = (U A) c with
+    the same c >= 0, so running the plain algorithms on U-transformed snapshots
+    is exactly the W-norm greedy. ``jitter`` is scaled by the Gram's own
+    magnitude, since mass matrices here have entries ~1e-4 and a fixed absolute
+    nudge would swamp them.
+    """
+    gram = np.asarray(gram, dtype=float)
+    if gram.ndim != 2 or gram.shape[0] != gram.shape[1]:
+        raise ValueError(f"gram must be square 2-D, got shape {gram.shape}")
+    if not np.allclose(gram, gram.T, rtol=0.0, atol=1e-10 * max(1.0, float(np.abs(gram).max()))):
+        raise ValueError("gram must be symmetric")
+
+    scale = float(np.trace(gram)) / gram.shape[0] if gram.shape[0] else 1.0
+    return la.cholesky(gram + jitter * max(scale, 1.0) * np.eye(gram.shape[0]), lower=False)
+
+
+def w_norm(vectors: np.ndarray, gram: np.ndarray) -> np.ndarray:
+    """Row-wise W-norm sqrt(x.T @ gram @ x) for a (n, d) stack of vectors."""
+    vectors = np.atleast_2d(np.asarray(vectors, dtype=float))
+    quadratic = np.einsum("ij,jk,ik->i", vectors, np.asarray(gram, dtype=float), vectors)
+    return np.sqrt(np.maximum(quadratic, 0.0))
 
 
 def load_lambda_dataset(path: Path) -> tuple[np.ndarray, np.ndarray, str]:
@@ -316,6 +384,44 @@ def parameter_train_test_split(
     train_mask = np.ones(n_rows, dtype=bool)
     train_mask[test_indices] = False
     train_indices = np.flatnonzero(train_mask)
+    return train_indices.astype(int), test_indices.astype(int)
+
+
+def tensor_grid_interior_split(
+    mu_samples: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Hold out the strict interior of a tensor-product parameter grid.
+
+    For a multi-dimensional parameter (e.g. the membrane's 5x5x5 grid over
+    (radius, cx, cy)), splitting on a single component is degenerate: that
+    component takes only a handful of distinct values, so a sorted split neither
+    interpolates in it nor controls the others. Instead this keeps the whole
+    boundary shell of the grid (any point with a component at its min or max)
+    for training and holds out every strictly interior point, which makes the
+    test set a genuine interpolation check in *all* parameter directions at
+    once.
+
+    Only meaningful for >= 2 parameter dimensions; a 1-D parameter would leave
+    all but two points held out, so use ``parameter_train_test_split`` there.
+    """
+    mu_samples = np.atleast_2d(np.asarray(mu_samples, dtype=float))
+    if mu_samples.shape[1] < 2:
+        raise ValueError(
+            "tensor_grid_interior_split needs a multi-dimensional parameter; "
+            "use parameter_train_test_split for a scalar parameter"
+        )
+
+    interior = np.ones(mu_samples.shape[0], dtype=bool)
+    for column in range(mu_samples.shape[1]):
+        values = np.unique(mu_samples[:, column])
+        position = np.searchsorted(values, mu_samples[:, column])
+        interior &= (position > 0) & (position < values.size - 1)
+
+    test_indices = np.flatnonzero(interior)
+    train_indices = np.flatnonzero(~interior)
+    if train_indices.size == 0:
+        raise ValueError("tensor grid split produced an empty training set")
     return train_indices.astype(int), test_indices.astype(int)
 
 

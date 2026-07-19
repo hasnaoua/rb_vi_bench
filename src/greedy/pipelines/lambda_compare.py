@@ -2,14 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 from pathlib import Path
-
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -498,7 +491,6 @@ def main() -> None:
     print(f"  reconstruction_plot: {reconstruction_plot}")
 
     for method, values in results.items():
-        residuals = values["residuals"]
         relative = values["relative"]
         test_relative = relative[test_indices] if test_indices.size else relative
         print(

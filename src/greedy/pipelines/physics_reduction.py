@@ -2,15 +2,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 import time
 from pathlib import Path
-
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -136,7 +129,7 @@ def run_method(
     epsilon: float | None = None,
     basis: np.ndarray | None = None,
     selected_indices: list[int] | None = None,
-    adg_normalize_snapshots: bool = False,
+    adg_normalize_snapshots: bool = True,
 ) -> dict[str, np.ndarray | list[int] | float | str]:
     start = time.perf_counter()
 
@@ -833,7 +826,7 @@ def write_report(
     dataset_source: str,
     components: int,
     relative_norm_floor: float,
-    adg_normalize_snapshots: bool = False,
+    adg_normalize_snapshots: bool = True,
 ) -> None:
     lines = [
         "Physics reduction experiment report",
@@ -933,12 +926,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--zero-tol", type=float, default=1e-12)
     parser.add_argument(
         "--adg-normalize-snapshots",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
             "Fit ADG's stopping/selection criterion on per-snapshot unit-normalized "
             "snapshots instead of one absolute tolerance shared across all snapshots "
-            "(epsilon * max_x ||x||). Returned basis vectors stay physical-scale "
-            "either way. Only affects ADG; CPG and mCPG are unaffected."
+            "(epsilon * max_x ||x||). This is standard ADG, on by default; pass "
+            "--no-adg-normalize-snapshots for the global-scale criterion. Returned "
+            "basis vectors stay physical-scale either way. Only affects ADG; CPG and "
+            "mCPG are unaffected."
         ),
     )
     parser.add_argument("--max-examples", type=int, default=5)

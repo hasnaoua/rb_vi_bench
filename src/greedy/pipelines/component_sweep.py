@@ -2,15 +2,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 import time
 from pathlib import Path
-
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -111,7 +104,7 @@ def fit_angle_fixed_components(
     epsilon: float | None = None,
     basis: np.ndarray | None = None,
     selected_indices: list[int] | None = None,
-    normalize_snapshots: bool = False,
+    normalize_snapshots: bool = True,
 ) -> tuple[np.ndarray, list[int], list[float]]:
     model = AngularDefectGreedy(
         snapshots=snapshots,

@@ -68,7 +68,13 @@ def run_experiments(
     if summary_path.exists():
         summary_path.unlink()
 
-    for centers in configurations:
+    # One independent, reproducible stream per configuration. Before this the
+    # snapshots came from the unseeded global np.random, so rng_seed only fixed
+    # the train/test split and every rerun silently produced different data --
+    # no synthetic number here could be reproduced.
+    data_seeds = np.random.SeedSequence(rng_seed).spawn(len(configurations))
+
+    for config_index, centers in enumerate(configurations):
         config_name = "means_" + "_".join(str(int(center * 100)) for center in centers)
         config_dir = out_root / config_name
         ensure_dir(config_dir)
@@ -79,7 +85,13 @@ def run_experiments(
             discretization_count=discretization_count,
             centers=list(centers),
         )
-        data = create_data(basis, num_fields=num_samples, noise_level=0.0, min_value=0.0)
+        data = create_data(
+            basis,
+            num_fields=num_samples,
+            noise_level=0.0,
+            min_value=0.0,
+            rng=np.random.default_rng(data_seeds[config_index]),
+        )
         snapshots = np.asarray(data, dtype=float)
         radii = np.linspace(0.0, 1.0, snapshots.shape[0])
 
@@ -208,12 +220,11 @@ def run_experiments(
             )
 
             t0 = time.perf_counter()
-            # Standard ADG: per-snapshot normalization + angular redundancy.
+            # Standard ADG: per-snapshot normalization.
             adg = AngularDefectGreedy(
                 snapshots=train_snapshots,
                 epsilon=float(eps),
                 normalize_snapshots=True,
-                angle_redundancy_tol=0.05,
             )
             adg.compute_phases()
             elapsed = time.perf_counter() - t0

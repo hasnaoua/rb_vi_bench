@@ -1,35 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
-
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+from greedy.viz.contact_force_profiles import load_dataset
 
 DEFAULT_DATASET = Path("results/lambda/dataset/lambda_dataset.npz")
 DEFAULT_OUTPUT_DIR = Path("results/lambda/plots")
-
-
-def load_dataset(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    data = np.load(path, allow_pickle=False)
-    snapshots = np.asarray(data["snapshots"], dtype=float)
-    radii = np.asarray(data["radii"], dtype=float)
-
-    if snapshots.ndim != 2:
-        raise ValueError(f"snapshots must be 2-D, got shape {snapshots.shape}")
-    if radii.ndim != 1 or radii.size != snapshots.shape[0]:
-        raise ValueError(
-            f"radii must be 1-D with {snapshots.shape[0]} values, got {radii.shape}"
-        )
-    return snapshots, radii
 
 
 def choose_row(radii: np.ndarray, row: int | None, radius: float | None) -> int:

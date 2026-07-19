@@ -2,70 +2,24 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
-import re
-from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-cache")
-
-import matplotlib
-
-matplotlib.use("Agg")
-
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-DEFAULT_ARCHIVE = Path("data/FEM_SOLS.zip")
-DEFAULT_DIRECTORY = Path("data/FEM_SOLS")
-DEFAULT_OUTPUT_DIR = Path("results/lambda/primal_dataset")
-DEFAULT_PREFIX = "res"
-RADIUS_PATTERN = re.compile(
-    r"^rad=([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)$"
+# Same archive and same rad= layout as lambda_snapshots; see fem_sols_io.
+from greedy.datasets.fem_sols_io import (
+    SnapshotRecord,
+    default_input_path,  # noqa: F401  (re-exported alongside lambda_snapshots)
+    flatten_snapshot as _flatten_snapshot,
+    load_npy_bytes as _load_npy_bytes,
+    parse_radius_from_parts as _parse_radius_from_parts,
 )
 
-
-@dataclass(frozen=True)
-class SnapshotRecord:
-    radius: float
-    radius_label: str
-    source: str
-    original_shape: tuple[int, ...]
-    values: np.ndarray
-
-
-def default_input_path() -> Path:
-    if DEFAULT_ARCHIVE.exists():
-        return DEFAULT_ARCHIVE
-    return DEFAULT_DIRECTORY
-
-
-def _parse_radius_from_parts(parts: tuple[str, ...]) -> tuple[float, str] | None:
-    for part in parts:
-        match = RADIUS_PATTERN.match(part)
-        if match:
-            label = match.group(1)
-            return float(label), label
-    return None
-
-
-def _load_npy_bytes(data: bytes) -> np.ndarray:
-    return np.load(BytesIO(data), allow_pickle=False)
-
-
-def _flatten_snapshot(array: np.ndarray, source: str) -> tuple[np.ndarray, tuple[int, ...]]:
-    values = np.asarray(array, dtype=float)
-    original_shape = tuple(values.shape)
-    values = values.reshape(-1)
-    if values.size == 0:
-        raise ValueError(f"{source} is empty")
-    if not np.all(np.isfinite(values)):
-        bad_count = int(values.size - np.count_nonzero(np.isfinite(values)))
-        raise ValueError(f"{source} contains {bad_count} non-finite values")
-    return values, original_shape
+DEFAULT_OUTPUT_DIR = Path("results/lambda/primal_dataset")
+DEFAULT_PREFIX = "res"
 
 
 def _choose_snapshot_file(files: dict[str, str | Path]) -> tuple[str, str | Path]:
