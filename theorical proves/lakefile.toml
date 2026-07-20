@@ -1,0 +1,10 @@
+name = "theorical proves"
+version = "0.1.0"
+defaultTargets = ["theorical proves"]
+
+[[lean_lib]]
+name = "«Theorical proves»"
+
+[[lean_exe]]
+name = "theorical proves"
+root = "Main"
