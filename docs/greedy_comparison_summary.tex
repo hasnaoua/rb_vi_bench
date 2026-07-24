@@ -40,7 +40,11 @@ fair baseline comparison exposes two weaknesses of the raw greedy cones (poor
 worst-case relative accuracy when snapshot magnitudes vary, and severe
 ill-conditioning from near-duplicate generators); we then add one ingredient to
 \ADG\ --- \emph{per-snapshot normalisation} --- and call the result the
-\textbf{standard \ADG}. It addresses the first weakness and not the second. At
+\textbf{standard \ADG}. Geometrically this ingredient is a single move
+(Sec.~\ref{sec:geometry}): it sends every snapshot to the unit sphere and turns
+the positive cone into a spherical region, so novelty becomes a geodesic
+distance and the whole method is read intrinsically, on directions alone. It
+addresses the first weakness and not the second. At
 equal cone size the standard \ADG\ is $15$--$28\times$ more accurate than
 \CPG/\mCPG\ on the wide-magnitude physics data (magnitude ratio $604$); on the
 well-scaled lambda data it selects the same generators as \CPG, inherits the same
@@ -69,7 +73,10 @@ generators.
   \item \ADG\ adds the snapshot of largest \emph{angle}
         $\theta_K(x)=\arcsin\!\big(\|x-\Pi_K(x)\|_2/\|x\|_2\big)$ to the cone ---
         a \emph{scale-invariant} novelty measure, so its selection is intrinsically
-        insensitive to snapshot magnitude.
+        insensitive to snapshot magnitude. A round admits \emph{every} snapshot tied
+        at the maximal angle $\theta_{\max}$, and per-snapshot normalisation
+        (Sec.~\ref{sec:geometry}) is its only remaining knob; the \textbf{standard
+        \ADG} is \ADG\ with that knob on.
   \item \mCPG\ selects like \CPG\ but stores a shifted, re-normalised generator
         $\nu=(x-\Pi_K(x))/\|x-\Pi_K(x)\|_2$, carrying only the direction new to the
         cone.
@@ -114,11 +121,102 @@ wins.
   \end{tabular}
 \end{table}
 
+\section{The standard ADG on the unit sphere}
+\label{sec:geometry}
+
+The single ingredient that turns \ADG\ into the \emph{standard} \ADG\ is
+per-snapshot normalisation. Algebraically it is small: divide each snapshot by
+its own norm before the stopping/unresolved check, while still storing
+\emph{physical-scale} generators, so $\varepsilon$ becomes a genuine per-snapshot
+relative tolerance rather than the absolute floor $\varepsilon\max_x\|x\|$ shared
+across the dataset. It is applied to \ADG\ only; \CPG/\mCPG\ have no such option
+and stay on the raw snapshots. It moves the stopping test, never the argmax:
+because the angle $\theta_K$ is scale-invariant, normalisation cannot change
+\emph{which} generator a round selects, only how many rounds run before every
+snapshot counts as resolved.
+
+Geometrically that small move is one clean picture, and it is the whole of what
+``standard'' means here (Figs.~\ref{fig:sphere-2d}--\ref{fig:sphere-3d}).
+
+\begin{itemize}
+  \item \textbf{Snapshots live on the unit sphere.} Normalising
+        $x\mapsto \hat x=x/\|x\|$ sends every nonzero snapshot to a point of the
+        unit sphere $S^{d-1}$: magnitude is discarded and only direction
+        survives. The wide-magnitude cloud of the left panels collapses onto the
+        sphere on the right.
+  \item \textbf{The cone becomes a spherical region.} The positive cone
+        $K=\operatorname{span}_+\{w_1,\dots,w_R\}$ is scale-invariant
+        ($x\in K\iff\hat x\in K$), so it is fully described by its trace
+        $\widehat A(K)=K\cap S^{d-1}$ --- an \emph{arc} in $\mathbb{R}^2$
+        (Fig.~\ref{fig:sphere-2d}, right), a geodesically convex \emph{spherical
+        triangle}/cap in $\mathbb{R}^3$ (Fig.~\ref{fig:sphere-3d}, right). The
+        generator directions $\hat w_i$ are its vertices and $\widehat A(K)$ is
+        their geodesic convex hull; its area (the solid angle read out in
+        Fig.~\ref{fig:sphere-3d}, $0.36$~sr, $2.9\%$ of the sphere) is the
+        fraction of directions the cone can represent.
+  \item \textbf{Novelty is a geodesic distance.} For a snapshot direction
+        $\hat x$, the selection score
+        $\theta_K(x)=\arcsin(\|x-\Pi_K(x)\|_2/\|x\|_2)$ is exactly the
+        great-circle angle from $\hat x$ to $\widehat A(K)$ (the residual
+        $x-\Pi_K(x)$ is orthogonal to $\Pi_K(x)$, so the triangle
+        $0,\Pi_K(x),x$ is right-angled). \ADG\ therefore adds the snapshot whose
+        direction is geodesically \emph{farthest} from the current region --- it
+        patches the widest angular gap in the sphere's coverage. Scale-invariance
+        is manifest: two snapshots on one ray are the same point of $S^{d-1}$ and
+        are indistinguishable to the rule.
+  \item \textbf{Standard \ADG\ is the whole analysis done on the sphere.} Raw
+        \ADG\ scores its stopping residual against one global scale
+        $\varepsilon\max_x\|x\|$, so a small-magnitude snapshot can drop below
+        that absolute floor while its \emph{direction} is still far from
+        $\widehat A(K)$. Normalisation deletes the magnitude axis: the stopping
+        test becomes ``is every snapshot direction within the target angular
+        tolerance of $\widehat A(K)$?'', the intrinsic question the sphere makes
+        obvious. On wide-magnitude data (physics, ratio $604$) this rescues the
+        small snapshots the floor hides; on well-scaled data (ratio $\approx1$)
+        every point already sits in a thin band on the sphere, so normalisation
+        changes only the bookkeeping (Sec.~\ref{sec:norm}).
+  \item \textbf{The certificate is an angular defect.} The worst residual after
+        a round is bounded by $\max(\varepsilon C,\,C\sin\theta_{\max})$ with
+        $C=\max_x\|x\|$ and $\theta_{\max}$ the largest remaining geodesic gap ---
+        the \emph{angular defect} that names the method. The bound is checked
+        against the recorded convergence history at every round
+        (\texttt{verify\_angular\_defect\_certificate}).
+\end{itemize}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.92\linewidth]{figures/adg_sphere_2d.png}
+  \caption{$\mathbb{R}^2$: a positive cone $K$ (purple wedge) and snapshots
+    (orange). Normalising sends each snapshot to the unit circle and $K$ to the
+    \emph{arc} $\widehat A(K)=K\cap S^1$ (right). The stopping test asks that
+    every snapshot direction lie within an angular tolerance of that arc; the
+    selection score is the great-circle gap to it.}
+  \label{fig:sphere-2d}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.92\linewidth]{figures/adg_sphere_3d.png}
+  \caption{$\mathbb{R}^3$: the same picture one dimension up. The cone's trace on
+    the unit sphere is a geodesically convex \emph{spherical triangle}
+    $\widehat A(K)$ (right, green); its solid angle ($0.36$~sr here, $2.9\%$ of
+    the sphere) measures how much of direction-space the cone spans. \ADG\ grows
+    $\widehat A(K)$ by admitting the snapshot direction geodesically farthest from
+    it.}
+  \label{fig:sphere-3d}
+\end{figure}
+
 \section{Baseline: the three methods as-is}
 
 Run at a common relative tolerance $\varepsilon=10^{-2}$ (each method stops at its
 own cone size), the raw greedy cones already reveal the two problems that motivate
-everything else (Table~\ref{tab:baseline}).
+everything else (Table~\ref{tab:baseline}). \textbf{This table is diagnostic, not a
+fair comparison}: a common $\varepsilon$ stops the three methods at \emph{different}
+$R$ (lambda $23/15/23$, physics $9/9/11$), so any accuracy gap here conflates the
+method with how many generators its tolerance happened to buy. The fair,
+like-for-like comparison --- every method at the \emph{same} cone size $R$ --- is
+Table~\ref{tab:matched}; read the numbers below only as evidence of the two failure
+modes, never as ``method A beats method B''.
 
 \begin{table}[htbp]
   \centering
@@ -157,17 +255,14 @@ is structural: any method that stores raw snapshots as generators inherits it, s
 it is answered by \mCPG's shifted, re-normalised generators rather than by
 anything \ADG\ can do to its selection rule.
 
-\section{Idea 1 --- per-snapshot normalisation}
+\section{What normalisation buys, and what it costs}
 \label{sec:norm}
 
-\ADG's \emph{selection} is scale-invariant, but its \emph{stopping} rule still
-compares the absolute residual to a single global scale $\varepsilon\max_x\|x\|$.
-On wide-magnitude data this lets a small snapshot leave the ``unresolved'' set
-while still $50\%$+ wrong in relative terms. Measuring the error relative to each
-snapshot's own norm (dividing $x$ by $\|x\|$ before the stopping check, while
-still storing physical-scale generators) makes the criterion a genuine
-per-snapshot relative one. It is applied to \ADG\ \emph{only}; \CPG/\mCPG\ have
-no such option and stay on the raw snapshots.
+Sec.~\ref{sec:geometry} defined the operation and its geometry; this section is
+what it does to the numbers, on the two datasets it was developed on. The rule
+of thumb is the magnitude ratio: normalisation rescues masked small-magnitude
+snapshots when the ratio is large, and merely demands more generators when it is
+near $1$.
 
 Figure~\ref{fig:norm-tail} shows the effect on physics: the raw methods leave a
 broad plateau of small-magnitude snapshots stuck near $10^{-2}$ relative error,
@@ -196,18 +291,20 @@ earns its keep on physics (ratio $604$), not here.
   \label{fig:norm-tail}
 \end{figure}
 
-\section{The standard ADG and a fair comparison}
+\section{Fair comparison at matched cone size}
 
-We define the \textbf{standard \ADG} as plain \ADG\ with per-snapshot
-normalisation on. Normalisation is its only setting: it moves the stopping test,
-never the argmax, so it cannot change \emph{which} generator a round selects ---
-only how many rounds are run before every snapshot counts as resolved. Since the
-three methods otherwise stop at different $R$, comparing them at their own
-stopping points measures the tolerance as much as the method. We therefore walk
-each basis prefix $K_1,\dots,K_R$ and compare at \emph{matched} cone size
+\textbf{This is the fair comparison, and the one to read.} A method is only worth
+comparing to another at the \emph{same budget}: equal cone size $R$, i.e.\ equal
+number of generators. Because normalisation moves \ADG's stopping test but never
+its argmax (Sec.~\ref{sec:geometry}), a common $\varepsilon$ stops the three
+methods at different $R$, so their own stopping points measure the tolerance as
+much as the method (Table~\ref{tab:baseline}). We remove that confound by walking
+each basis prefix $K_1,\dots,K_R$ and comparing at \emph{matched} $R$
 (Table~\ref{tab:matched}); all three greedies are nested, so a prefix of length
 $n$ is exactly the cone that method would have produced had $\varepsilon$ stopped
-it at $n$.
+it at $n$. Every conclusion in this note rests on these equal-$R$ numbers, not on
+the equal-$\varepsilon$ baseline. The rows below were regenerated from the current
+pipelines and match to all reported digits.
 
 \begin{table}[htbp]
   \centering
@@ -272,7 +369,8 @@ central thesis and force \emph{three} refinements --- the third, from case~(a),
 retracting a claim the other three datasets had made look like a law.
 
 \paragraph{What is different here.}
-Three things depart from Secs.~1--5, and each matters for reading the numbers.
+Three things depart from the lambda and physics analysis above, and each matters
+for reading the numbers.
 \begin{itemize}
   \item \textbf{A non-Euclidean dual inner product.} Errors, projections and
         angles are measured in $\|x\|_W=\sqrt{x^\top W x}$ with $W$ the dual mass
@@ -330,11 +428,14 @@ set, in a different order, hence the same cone) and near-singular at
 $\kappa_2=5.5\times10^{9}$; \mCPG\ reaches the same tolerance with $34\%$ fewer
 generators and a $\kappa_2$ seven orders of magnitude smaller. Both datasets have
 magnitude ratio $\approx1.2$, and both behave exactly as the ratio predicts. This
-is the note's main claim confirmed on data it was not developed on.
+is the note's main claim confirmed on data it was not developed on. As in
+Table~\ref{tab:baseline}, these are each method's own $\varepsilon$ stopping
+points ($R=38/25/38$ on Hertz), so the table is again diagnostic only; the fair
+equal-$R$ comparison is Table~\ref{tab:contact-matched}.
 
-\subsection{Idea 1 on new data: normalisation is not merely inert --- it is harmful}
+\subsection{Normalisation on new data: not merely inert --- harmful}
 
-Sec.~3 found normalisation ``inert'' on uniform-magnitude data. On these sets it is
+Sec.~\ref{sec:norm} found normalisation ``inert'' on uniform-magnitude data. On these sets it is
 worse than inert: at ratios of $1.16$/$1.30$ there is no masked small-magnitude
 snapshot for it to rescue, so the stricter per-snapshot criterion only demands more
 generators for no return. On Hertz it takes \ADG\ from $R=38$ to $R=42$ and
@@ -413,7 +514,8 @@ data \mCPG\ is the method of choice at every budget; \ADG\ has no role.
 \subsection{What only held-out testing reveals: a generalisation floor}
 \label{sec:floor}
 
-Every table in Secs.~1--4 scores the training data. On Hertz that would have hidden
+Every lambda and physics table above scores the training data (there, the whole
+dataset). On Hertz that would have hidden
 the most important effect on these datasets: \textbf{the held-out error floors}.
 \CPG/\ADG's test $\rho_{\max}$ is pinned at $6.280\times10^{-2}$ from $R=12$ all the
 way to $R=38$ --- the last $26$ generators improve training error $4\times$ and
@@ -537,6 +639,12 @@ interpolation split rather than of any one greedy.
 \section{Conclusions}
 
 \begin{itemize}
+  \item \textbf{Geometry.} The standard \ADG\ is \ADG\ read on the unit sphere
+        (Sec.~\ref{sec:geometry}): normalisation sends snapshots to $S^{d-1}$ and
+        the cone to a spherical region $\widehat A(K)$, making novelty a geodesic
+        distance and the stopping test an intrinsic ``every direction covered to
+        tolerance'' check. This is exactly why it helps when magnitudes vary and
+        is inert when they do not.
   \item \textbf{Baseline.} Raw greedy cones have two failure modes: poor
         worst-case relative accuracy when snapshot magnitudes vary (\CPG/\mCPG\ on
         physics), and near-singular bases from near-parallel generators
@@ -586,6 +694,9 @@ interpolation split rather than of any one greedy.
 \end{itemize}
 
 \paragraph{Reproducibility.}
+The two sphere schematics (Figs.~\ref{fig:sphere-2d}--\ref{fig:sphere-3d}) are
+illustrative renderings of the normalisation geometry, not data plots:
+\texttt{docs/figures/adg\_sphere\_2d.png} and \texttt{adg\_sphere\_3d.png}.
 Matched-$R$ comparison (Table~\ref{tab:matched}):
 \texttt{results/physics/reduction/physics\_component\_sweep\_metrics.csv} and
 \texttt{results/lambda/component\_sweep/component\_sweep\_metrics.csv}, from
