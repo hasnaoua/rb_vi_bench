@@ -238,6 +238,33 @@ means the dataset cannot discriminate between methods.
 never measured must not look like one that scored badly, so every non-running cell
 emits a row with a `skip_reason`.
 
+## FEM_SOLS: nodal forces vs pressure
+
+`fem_lambda` is [BEE20] §6.2's half-disk contact problem. The archive ships **no
+coordinates and no connectivity**, so the node ordering had to be established from the
+values (see `datasets.FEM_LAMBDA_ORDERING`):
+
+* **Already ordered**, index 0 at the symmetry axis running outward — total variation
+  7.81 against 84.0 for a random permutation, 91% of active steps strictly decreasing.
+* **Node 0 carries a half-support shape function**: `λ₀/λ₁ = 0.5035 ± 0.019` across all
+  50 snapshots. So these are nodal **forces** `∫ p φᵢ`, not pressures.
+* **Spacing is uniform**: doubling node 0 and fitting the Hertz semi-ellipse against the
+  node *index* gives `R² = 0.989`, half-width `a = 13.3` nodes. Index is a faithful
+  abscissa; no coordinates are needed.
+* **Seriation finds nothing better** — spectral (Fiedler) ordering scored `TV = 20.7`,
+  worse by 2.7×, because the 43 near-zero tail nodes dominate the correlation.
+
+`fem_lambda_pressure` is the same data with that weighting undone (`p = λ/hᵢ`, i.e. node
+0 doubled up to a global constant). Both are carried because **the correction is not
+cosmetic**: cone methods are invariant to rescaling a *snapshot* but not a *coordinate*,
+so the two are genuinely different reduction problems. Measured at `δ = 0.02`, CPG and
+mCPG select identically on both, while **ADG does not** — consistent with ADG selecting
+on angle, which a coordinate rescaling rotates. A test asserts at least one method sees
+the difference, so the pair can never silently become redundant.
+
+The residual ±8% mesh grading is **not** corrected; that needs tributary lengths the
+archive does not carry.
+
 ## What the datasets are, and what they are not
 
 Eight sources, differing in exactly the ways that matter: whether the constraint

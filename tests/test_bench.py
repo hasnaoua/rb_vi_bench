@@ -745,6 +745,45 @@ def test_reconstruction_renders_fields_for_grid_datasets(tmp_path):
             assert (root / m / case).stat().st_size > 20000, f"{m}/{case} looks like a curve"
 
 
+def test_fem_lambda_pressure_corrects_only_the_symmetry_node():
+    """The pressure view doubles node 0 and touches nothing else.
+
+    Under lambda_i = integral p phi_i ~ p(x_i) h_i with uniform spacing, the tributary
+    length is h everywhere except the symmetry-axis node, whose hat is truncated to h/2.
+    So the conversion is exactly a factor 2 on row 0, up to a global constant that
+    span_+ is invariant to.
+    """
+    force = ds_mod.load("fem_lambda")
+    press = ds_mod.load("fem_lambda_pressure")
+
+    assert press.snapshots.shape == force.snapshots.shape
+    assert np.allclose(press.snapshots[1:], force.snapshots[1:]), "non-symmetry nodes moved"
+    assert np.allclose(press.snapshots[0], 2.0 * force.snapshots[0])
+    # The split must be the paper's, same as the uncorrected view.
+    assert np.array_equal(press.train_idx, force.train_idx)
+    assert np.array_equal(press.test_idx, force.test_idx)
+    # Loading one must not mutate the other -- both are lru_cached.
+    assert not np.allclose(force.snapshots[0], press.snapshots[0])
+
+
+def test_coordinate_rescaling_can_change_the_reduction():
+    """Doubling one coordinate is not a no-op for a cone method.
+
+    The cone algorithms are invariant to rescaling each *snapshot* (span_+ is), but not
+    to rescaling a *coordinate*. If this ever came out invariant for every method, the
+    pressure dataset would be redundant and should be dropped.
+    """
+    force = ds_mod.load("fem_lambda")
+    press = ds_mod.load("fem_lambda_pressure")
+    differed = []
+    for key in ("cpg_bee20", "mcpg_ndee22", "adg"):
+        a = METHODS[key].fit(force, delta=0.02)
+        b = METHODS[key].fit(press, delta=0.02)
+        if a.selected_indices != b.selected_indices:
+            differed.append(key)
+    assert differed, "no method saw the correction; the pressure view would be redundant"
+
+
 def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""
     for key, method in METHODS.items():

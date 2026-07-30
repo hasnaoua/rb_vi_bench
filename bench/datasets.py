@@ -227,6 +227,45 @@ def _fem_lambda() -> Dataset:
     )
 
 
+def _fem_lambda_pressure() -> Dataset:
+    """``fem_lambda`` converted from nodal forces to a **pressure-like** field.
+
+    Same snapshots, with the symmetry-axis node's half-support weighting undone. Under
+    ``lambda_i = integral p phi_i ~ p(x_i) h_i`` with uniform spacing ``h``, the tributary
+    length is ``h`` at every interior node and ``h/2`` at node 0, whose hat is truncated
+    by the symmetry plane. So ``p_i = lambda_i / h_i`` is ``lambda`` with node 0 doubled,
+    up to the global constant ``h`` -- and that constant is irrelevant, since ``span_+``
+    is invariant to a positive rescaling of the whole dataset.
+
+    **This is a genuinely different reduction problem, not a cosmetic rescaling.** The
+    cone algorithms are invariant to scaling each *snapshot*, but not to scaling a
+    *coordinate*: doubling one row moves every snapshot in a direction the cone geometry
+    can see, so the selected parameters and the achieved errors may differ. Which is the
+    point of carrying both -- it measures whether the FEM nodal-force weighting distorts
+    the reduction relative to the physical field.
+
+    Two assumptions, both established in ``FEM_LAMBDA_ORDERING`` rather than posited:
+    uniform spacing (Hertz semi-ellipse fits the node index at R^2 = 0.989), and node 0
+    as the only half-support node (``lambda[0]/lambda[1] = 0.5035 +/- 0.019``). The
+    residual +/-8% mesh grading is *not* corrected -- that would need tributary lengths,
+    which the archive does not carry.
+    """
+    base = _fem_lambda()
+    S = base.snapshots.copy()
+    S[0, :] *= 2.0
+    return Dataset(
+        name="fem_lambda_pressure",
+        snapshots=S,
+        description="[BEE20] §6.2 half-disk, nodal forces converted to pressure",
+        paper="greedy_algos / FEM_SOLS",
+        params=base.params,
+        train_idx=base.train_idx,
+        test_idx=base.test_idx,
+        geometry=geometry.line_geometry(
+            xlabel="contact node (0 = symmetry axis, half-support corrected)"),
+    )
+
+
 #: What is known about the FEM_SOLS node ordering, and how.
 #:
 #: FEM_SOLS ships no coordinates and no mesh connectivity -- only 57 multiplier values per
@@ -367,8 +406,10 @@ DATASETS: dict[str, DatasetSpec] = {
                     "validated physics, 4000 samples"),
         DatasetSpec("gaussian_synth", "Gaussian bumps", _gaussian_synth, "fast",
                     "known generating rank"),
-        DatasetSpec("fem_lambda", "FEM_SOLS multipliers", _fem_lambda, "fast",
-                    "real FEM multipliers, paper grid split"),
+        DatasetSpec("fem_lambda", "FEM_SOLS nodal forces", _fem_lambda, "fast",
+                    "[BEE20] §6.2 half-disk, as stored"),
+        DatasetSpec("fem_lambda_pressure", "FEM_SOLS pressure", _fem_lambda_pressure,
+                    "fast", "same, symmetry-node half-support corrected"),
         DatasetSpec("physics", "Physics contact forces", _physics, "fast",
                     "7676 dofs; dimension scaling"),
         DatasetSpec("membrane_2d", "2-D membrane", _membrane_2d, "heavy",
