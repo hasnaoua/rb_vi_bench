@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from . import datasets as ds_mod, layout
-from .adapters import METHODS
+from .adapters import DEFAULT_METHODS, METHODS
 from .figures import STYLE
 from .metrics.precision import reconstruct, uses_cone_projection
 from .runner import _subsample
@@ -130,7 +130,7 @@ def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="best/worst reconstruction figures")
     p.add_argument("--datasets", nargs="*", default=list(ds_mod.FAST) + list(ds_mod.HEAVY))
-    p.add_argument("--methods", nargs="*", default=list(METHODS))
+    p.add_argument("--methods", nargs="*", default=list(DEFAULT_METHODS))
     p.add_argument("--R", type=int, default=8,
                    help="matched cardinality to fit every method at (default 8)")
     p.add_argument("--subsample", type=int, default=200)

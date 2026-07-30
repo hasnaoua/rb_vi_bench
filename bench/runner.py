@@ -6,8 +6,13 @@ Two modes, run separately because they answer different questions (see
 * ``tolerance`` -- every method gets the same ``delta`` and reports the ``R`` it needed.
   NMF and POD cannot enter: [BEE20] §5's objection to NMF is precisely that "the user
   does not specify an error tolerance but only the cardinality".
-* ``cardinality`` -- every method gets the same ``R``. The only mode where all eleven
-  methods are comparable, and the one on which [BEE20]'s notes record NMF beating CPG.
+* ``cardinality`` -- every method gets the same ``R``. The only mode where the baselines
+  are comparable at all, and the one on which [BEE20]'s notes record NMF beating CPG.
+
+By default only ``adapters.DEFAULT_METHODS`` runs: one canonical implementation per
+algorithm. The duplicate transcriptions stay reachable via ``--methods``, and
+``agreement.csv`` is built from ``CROSS_FAMILY_PAIRS`` regardless, so the
+cross-implementation check keeps running even when they are not in the grid.
 
 **Skips are recorded, not silently dropped.** Every cell that does not run emits a row
 with a ``skip_reason``, because "this method was not measured here" and "this method
@@ -35,7 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from . import _paths, datasets as ds_mod, metrics
-from .adapters import CROSS_FAMILY_PAIRS, METHODS
+from .adapters import CROSS_FAMILY_PAIRS, DEFAULT_METHODS, METHODS
 from .types import Dataset
 
 RESULTS = _paths.ROOT / "results"
@@ -177,7 +182,9 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="run the rb_vi_bench grid")
     p.add_argument("--datasets", nargs="*", default=list(ds_mod.FAST),
                    help=f"default: the fast tier {list(ds_mod.FAST)}")
-    p.add_argument("--methods", nargs="*", default=list(METHODS))
+    p.add_argument("--methods", nargs="*", default=list(DEFAULT_METHODS),
+                   help="default: one canonical implementation per algorithm; "
+                        f"pass names to widen (all: {sorted(METHODS)})")
     p.add_argument("--deltas", nargs="*", type=float, default=list(DEFAULT_DELTAS))
     p.add_argument("--cardinalities", nargs="*", type=int, default=list(DEFAULT_CARDINALITIES))
     p.add_argument("--subsample", type=int, default=None,

@@ -74,6 +74,27 @@ agreement becomes **measurable** — which is what `bench/metrics/agreement.py` 
 generalizing `repos/rb_vi_shared/tests/test_equivalence.py` to real datasets and to the
 second implementation family.
 
+### What actually gets reported
+
+Every table and figure carries **one canonical implementation per algorithm**
+(`adapters.DEFAULT_METHODS`) — the transcription from the paper that *introduced* it:
+
+| reported as | implementation |
+|---|---|
+| CPG | `cone_projected_greedy` — `[BEE20]` Algorithm 2 |
+| mCPG | `mcpg` — `[NDEE22]` Algorithm 2 |
+| ADG | `AngularDefectGreedy`, normalized (standard) form on `S_norm` |
+| NMF | `[BEE20]` §6.4, one seed |
+| POD | negative control |
+
+The duplicates stay registered and reachable via `--methods`. They are not redundant —
+they are the *input* to the agreement metric, and `agreement.csv` is built from
+`CROSS_FAMILY_PAIRS` regardless of the reported set, so the cross-implementation check
+keeps running. Having established what it shows (CPG bit-identical across families,
+mCPG non-unique but accuracy-equivalent), carrying all eleven through every table only
+obscured the algorithm comparison. NMF's other seeds likewise remain available; their
+spread is measured by `stability.determinism`.
+
 ## Install and run
 
 ```bash

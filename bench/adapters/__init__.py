@@ -142,4 +142,30 @@ CROSS_FAMILY_PAIRS: tuple[tuple[str, str], ...] = (
 CONE_METHODS = tuple(k for k, m in METHODS.items() if m.cone_method)
 TOLERANCE_METHODS = tuple(k for k, m in METHODS.items() if m.supports_tolerance)
 
-__all__ = ["METHODS", "Method", "CROSS_FAMILY_PAIRS", "CONE_METHODS", "TOLERANCE_METHODS"]
+#: One canonical implementation per algorithm -- the default for every reported output.
+#:
+#: Each is the transcription from the paper that *introduced* the algorithm: CPG from
+#: [BEE20] Algorithm 2, mCPG from [NDEE22] Algorithm 2, ADG in its normalized (standard)
+#: form on ``S_norm``, one NMF seed, and the POD negative control.
+#:
+#: The duplicates stay registered and reachable through ``--methods``; they are not
+#: redundant, they are the input to ``metrics.agreement``, which is what makes the
+#: merge's retained transcriptions checkable rather than merely asserted. Having
+#: established what they show -- the two CPG families are bit-identical, the two mCPGs
+#: build non-unique but accuracy-equivalent cones -- carrying all of them through every
+#: table and figure only obscures the algorithm comparison. ``agreement.csv`` is
+#: generated from ``CROSS_FAMILY_PAIRS`` regardless of this set, so the check keeps
+#: running.
+#:
+#: NMF's other seeds likewise remain available: its across-seed spread is the
+#: non-determinism [BEE20] §5 raises against it, measured by ``stability.determinism``.
+DEFAULT_METHODS: tuple[str, ...] = (
+    "cpg_bee20",
+    "mcpg_ndee22",
+    "adg",
+    "nmf_s0",
+    "pod_control",
+)
+
+__all__ = ["METHODS", "Method", "CROSS_FAMILY_PAIRS", "CONE_METHODS",
+           "TOLERANCE_METHODS", "DEFAULT_METHODS"]

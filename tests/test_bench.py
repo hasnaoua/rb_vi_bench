@@ -647,6 +647,48 @@ def test_decrement_figures_render(tmp_path, bumps):
         assert p.stat().st_size > 5000, name
 
 
+def test_default_methods_are_one_canonical_version_per_algorithm():
+    """Reported outputs carry one implementation per algorithm, from its own paper.
+
+    CPG from [BEE20] Algorithm 2, mCPG from [NDEE22] Algorithm 2, ADG in its normalized
+    (standard) form, one NMF seed, and the POD control. The duplicates must stay
+    *registered* -- they are the input to the agreement metric, which is what makes the
+    merge's retained transcriptions checkable rather than merely asserted.
+    """
+    from bench.adapters import DEFAULT_METHODS
+
+    assert set(DEFAULT_METHODS) <= set(METHODS)
+    assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "nmf_s0", "pod_control")
+
+    # One CPG, one mCPG, one ADG, one NMF.
+    for prefix, expected in (("cpg_", 1), ("mcpg_", 1), ("adg", 1), ("nmf_", 1)):
+        n = sum(1 for k in DEFAULT_METHODS
+                if k.startswith(prefix) and not (prefix == "cpg_" and k.startswith("mcpg_")))
+        assert n == expected, f"{prefix}: {n} in the default set"
+
+    # ADG must be the normalized form, never the non-standard one.
+    assert "adg_raw" not in DEFAULT_METHODS
+
+    # The duplicates the agreement metric needs are still reachable.
+    for a, b in CROSS_FAMILY_PAIRS:
+        assert a in METHODS and b in METHODS
+
+
+def test_agreement_still_runs_outside_the_default_set(bumps):
+    """agreement.csv is built from CROSS_FAMILY_PAIRS, not from --methods.
+
+    Narrowing the reported grid must not silently switch off the cross-implementation
+    check, which is the reason the duplicate transcriptions are kept at all.
+    """
+    from bench.adapters import DEFAULT_METHODS
+    from bench.runner import run_agreement
+
+    assert any(b not in DEFAULT_METHODS for _a, b in CROSS_FAMILY_PAIRS)
+    rows = run_agreement(bumps, delta=0.2)
+    assert len(rows) == len(CROSS_FAMILY_PAIRS)
+    assert all(not r["skip_reason"] for r in rows)
+
+
 def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""
     for key, method in METHODS.items():
