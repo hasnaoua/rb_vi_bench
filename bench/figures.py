@@ -53,6 +53,19 @@ STYLE: dict[str, dict] = {
     "pod_control": dict(color="#7f8c8d", marker="x", ls="--", label="POD (control)"),
 }
 
+#: Cone-geometry panels: how much of ``span_+{all snapshots}`` a reduced cone captures,
+#: how wide it opens, and how far it reaches outside. See ``metrics.cone_geometry``.
+CONE_PANELS = (
+    ("cover_mean_err",      "mean residual on $K_{full}$",   "log",
+     "coverage of the full cone"),
+    ("cover_frac_within_10pct", "fraction within 10%",       "linear",
+     "sampled cone captured to 10%"),
+    ("aperture_mean_deg",   "mean pairwise angle [deg]",     "linear",
+     "aperture (how wide the cone opens)"),
+    ("outside_K_full_frac", r"fraction of generators outside", "linear",
+     r"reach outside $K_{full}$"),
+)
+
 PANELS = (
     ("test_max_rel_err", "max relative projection error", "log", "precision (test set)"),
     ("gram_cond",        "Gram condition number",         "log", "conditioning"),
@@ -221,6 +234,37 @@ def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
     return written
 
 
+def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
+    """Cone-geometry panels vs cardinality, all methods on one axis.
+
+    Separate from the metric panel because it answers a different question: those measure
+    a cone against the finite snapshot set, these measure it against the whole cone the
+    snapshots generate. A method can be identical on the first and very different on the
+    second -- which is exactly what mCPG does.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.0))
+    drawn = 0
+    for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), CONE_PANELS):
+        drawn += _panel(ax, series, column, ylabel, yscale, title)
+    if not drawn:
+        plt.close(fig)
+        return None
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=8, frameon=False,
+               bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(f"{dataset} — cone geometry vs cardinality", fontsize=12)
+    fig.text(0.5, 0.945,
+             r"coverage: how much of $span_+\{$all snapshots$\}$ is captured;  "
+             r"outside: generators no non-negative combination of snapshots can reach",
+             ha="center", fontsize=8, color="#555555")
+    fig.tight_layout(rect=(0, 0.04, 1, 0.93))
+    path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "cone_geometry.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
 def figure_precision_overview(all_series, out_dir: Path) -> Path:
     """One precision panel per dataset -- the cross-dataset summary."""
     names = sorted(all_series)
@@ -276,6 +320,9 @@ def main(argv=None) -> int:
     for dataset in sorted(all_series):
         if not args.no_panel:
             written.append(figure_for_dataset(dataset, all_series[dataset], out_dir))
+            cone = figure_cone_geometry(dataset, all_series[dataset], out_dir)
+            if cone:
+                written.append(cone)
         if args.split:
             written.extend(figures_split(dataset, all_series[dataset], out_dir))
     if not args.no_panel:

@@ -213,6 +213,38 @@ cone? Four criteria: same `R`, same selection order, **same cone as a set** (the
 that matters — it is invariant to generator scaling and column order), and generators
 equal up to normalization.
 
+**Cone geometry** (`metrics/cone_geometry.py`) — how the reduced cone `K_R` sits inside
+the cone the snapshots actually generate, `K_full = span₊{θ₁…θ_Q}`. Every other metric
+scores a cone against the *finite snapshot set*; this scores it against their whole conic
+hull, which is the object a dual basis is really meant to represent. Three statistics:
+**coverage** (relative residual of random points of `K_full` projected onto `K_R`),
+**aperture** (pairwise angles between generators — the cone-level analogue of `e_orth`),
+and **reach outside `K_full`**.
+
+### mCPG's cone really is larger — and not only in aperture
+
+CPG and ADG take snapshots as generators, so `K_R ⊆ K_full` by construction. mCPG does
+not: its generators are `νᵣ = (θ_q − Υᵣ)/‖·‖`, and a *difference* of two elements of
+`span₊{θ}` need not lie in `span₊{θ}`. Line 9's second constraint only guarantees
+`νᵣ ≥ 0`, i.e. membership of `W⁺` — which is the property the method needs.
+
+Measured: on `toy_bee20` at R=8, **two of eight** mCPG generators lie outside `span₊{θ}`
+(relative distances 0.15 and 0.82); on `fem_lambda`, most do. Confirmed independently of
+the NNLS residual by **LP feasibility** (`∃c ≥ 0 : Θc = νᵣ`), infeasible for exactly those
+generators. So [NDEE22] Remark 4.3's parenthetical — that `νᵣ` lies "in fact of
+`Span⁺({θ_qₙ})`" — does **not** hold as stated. What holds is the `W⁺` membership the same
+sentence claims first, and that is what the construction rests on.
+
+It is **data-dependent**: on smooth synthetic bumps every mCPG generator stays inside. So
+it is a property of the algorithm–data interaction, which is why it is measured per
+dataset rather than asserted once.
+
+Whether the extra reach *helps* is what coverage answers, and on these datasets it barely
+does — mCPG's coverage of `K_full` is within a fraction of a percent of CPG's despite a
+much wider aperture (51.8° vs 42.0° on `toy_bee20`; 37.2° vs 3.5° on `fem_lambda`, whose
+snapshots are nearly collinear). Reaching outside `K_full` only pays if the multipliers
+met at run time also lie outside it.
+
 ## Reading the output honestly
 
 Four things must travel with any number taken from here.

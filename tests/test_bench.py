@@ -784,6 +784,88 @@ def test_coordinate_rescaling_can_change_the_reduction():
     assert differed, "no method saw the correction; the pressure view would be redundant"
 
 
+def test_selection_based_methods_stay_inside_the_snapshot_cone(bumps):
+    """CPG and ADG pick snapshots as generators, so K_R subset K_full by construction."""
+    from bench.metrics import cone_geometry
+
+    for key in ("cpg_bee20", "adg"):
+        r = METHODS[key].fit(bumps, R=6)
+        stats = cone_geometry.reach_outside(bumps, r.generators)
+        assert stats["outside_K_full_frac"] == 0.0, key
+        assert stats["outside_K_full_max"] < cone_geometry.OUTSIDE_TOL, key
+
+
+def test_mcpg_can_leave_the_snapshot_cone_but_never_W_plus():
+    """mCPG's cone can extend beyond span_+{snapshots} -- and does, on real data.
+
+    Its generators are nu_r = (theta_q - Upsilon_r)/||.||, and a *difference* of two
+    elements of span_+{theta} need not lie in span_+{theta}. Line 9's second constraint
+    only guarantees nu_r >= 0, i.e. membership of W^+ -- which is the property the method
+    needs. [NDEE22] Remark 4.3's parenthetical claim of Span^+({theta_{q_n}}) is therefore
+    stronger than what actually holds.
+
+    It is data-dependent, not universal: on the synthetic bump fixture every generator
+    stays inside, while on toy_bee20 a quarter of them leave and on fem_lambda most do.
+    The test uses toy_bee20 for that reason, and cross-checks against LP feasibility
+    rather than trusting the NNLS residual alone.
+    """
+    from scipy.optimize import linprog
+
+    from bench.metrics import cone_geometry
+
+    ds = ds_mod.load("toy_bee20")
+    r = METHODS["mcpg_ndee22"].fit(ds, R=8)
+    G, T = r.generators, ds.train()
+    stats = cone_geometry.reach_outside(ds, G)
+
+    assert stats["min_entry"] >= -1e-12, "mCPG generator left W^+ -- that would be a bug"
+    assert stats["outside_K_full_frac"] > 0.0, "expected mCPG to leave the snapshot cone"
+
+    # Independent confirmation: exists c >= 0 with T c = nu_r ?
+    infeasible = 0
+    for k in range(G.shape[1]):
+        lp = linprog(np.zeros(T.shape[1]), A_eq=T, b_eq=G[:, k],
+                     bounds=[(0, None)] * T.shape[1], method="highs")
+        infeasible += int(not lp.success)
+    assert infeasible > 0, "NNLS said outside, LP said inside -- metric is unreliable"
+    assert infeasible / G.shape[1] == pytest.approx(stats["outside_K_full_frac"], abs=0.2)
+
+
+def test_selection_methods_never_leave_on_any_fast_dataset():
+    """The construction guarantee, checked across datasets rather than on one fixture."""
+    from bench.metrics import cone_geometry
+
+    for key in ("toy_bee20", "fem_lambda", "gaussian_synth"):
+        ds = ds_mod.load(key)
+        for method in ("cpg_bee20", "adg"):
+            stats = cone_geometry.reach_outside(
+                ds, METHODS[method].fit(ds, R=6).generators)
+            assert stats["outside_K_full_frac"] == 0.0, (key, method)
+
+
+def test_coverage_improves_with_cardinality(bumps):
+    """More generators cannot capture less of K_full, for a nested cone."""
+    from bench.metrics import cone_geometry
+
+    prev = None
+    for R in (2, 4, 8, 12):
+        r = METHODS["cpg_bee20"].fit(bumps, R=R)
+        cov = cone_geometry.coverage(bumps, r.generators, n_samples=24)["cover_mean_err"]
+        if prev is not None:
+            assert cov <= prev + 1e-9, f"coverage worsened from R={R//2} to R={R}"
+        prev = cov
+
+
+def test_cone_geometry_is_reproducible(bumps):
+    """The Monte-Carlo coverage estimate must be seeded, or no run is comparable."""
+    from bench.metrics import cone_geometry
+
+    r = METHODS["cpg_bee20"].fit(bumps, R=6)
+    a = cone_geometry.coverage(bumps, r.generators, n_samples=24)
+    b = cone_geometry.coverage(bumps, r.generators, n_samples=24)
+    assert a == b
+
+
 def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""
     for key, method in METHODS.items():

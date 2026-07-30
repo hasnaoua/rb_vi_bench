@@ -127,6 +127,7 @@ def run_cell(dataset: Dataset, method_key: str, *, delta=None, R=None,
     try:
         row.update(metrics.precision.evaluate(dataset, result))
         row.update(metrics.performance.evaluate(dataset, result))
+        row.update(metrics.cone_geometry.evaluate(dataset, result))
         row.update(metrics.stability.evaluate(
             dataset, result, with_infsup=with_infsup and dataset.supports_infsup))
         if with_determinism:
