@@ -256,12 +256,43 @@ def test_cross_family_implementations_agree(bumps, pair):
 
 
 def test_agreement_detects_genuine_difference(bumps):
-    """The agreement metric must be able to fail, or its passes mean nothing."""
+    """The agreement metric must be able to fail, or its passes mean nothing.
+
+    POD is the right probe: it is not a cone at all, so it must differ both
+    geometrically *and* in what a cone projection onto it achieves.
+    """
     cpg = METHODS["cpg_ndee22"].fit(bumps, R=6)
-    nmf = METHODS["nmf_s0"].fit(bumps, R=6)
-    row = metrics.agreement.compare(cpg, nmf)
+    pod = METHODS["pod_control"].fit(bumps, R=6)
+    row = metrics.agreement.compare(cpg, pod, dataset=bumps)
     assert row["set_max_diff"] > metrics.agreement.SOLVER_ATOL
-    assert metrics.agreement.verdict(row, ("cpg_ndee22", "nmf_s0")) == "divergent"
+    assert metrics.agreement.verdict(row, ("cpg_ndee22", "pod_control")).startswith("divergent")
+
+
+def test_geometric_divergence_is_separated_from_accuracy_loss(bumps):
+    """A different-but-equally-good cone must not be reported as a disagreement.
+
+    mCPG's generators are residuals built on earlier generators, so the [UNSPECIFIED]
+    line-9 solver choice compounds with R and the two implementations build visibly
+    different cones. They achieve the same accuracy, and the verdict has to say so --
+    otherwise the grid reads as though one implementation were defective.
+    """
+    a = METHODS["mcpg_ndee22"].fit(bumps, delta=0.05)
+    b = METHODS["mcpg_greedy"].fit(bumps, delta=0.05)
+    row = metrics.agreement.compare(a, b, dataset=bumps)
+    v = metrics.agreement.verdict(row, ("mcpg_ndee22", "mcpg_greedy"))
+    assert v in ("equivalent", "equivalent-within-solver-tol",
+                 "same-cone-different-order", "different-cone-same-accuracy"), v
+    if row["set_max_diff"] > metrics.agreement.SOLVER_ATOL:
+        assert row["max_err_gap"] <= metrics.agreement.ACCURACY_RTOL, (
+            "mCPG implementations differ in achieved accuracy, not just in cone shape")
+
+
+def test_accuracy_gap_is_absent_without_a_dataset(bumps):
+    """``compare`` must stay usable standalone, and must not fake an accuracy verdict."""
+    a = METHODS["cpg_ndee22"].fit(bumps, R=6)
+    b = METHODS["cpg_greedy"].fit(bumps, R=6)
+    row = metrics.agreement.compare(a, b)
+    assert "max_err_gap" not in row
 
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,12 @@ def _normalized(G: np.ndarray) -> np.ndarray:
 EXACT_ATOL = 1e-10
 SOLVER_ATOL = 1e-5
 
+# Relative gap in achieved projection error below which two geometrically different
+# cones count as equally good. 1% is well above the observed mCPG spread (the two
+# implementations match to 3-5 significant figures) and well below any difference that
+# would matter when choosing between them.
+ACCURACY_RTOL = 1e-2
+
 
 def cones_agree_as_sets(Ga: np.ndarray, Gb: np.ndarray, *,
                         n_probes: int = 12, seed: int = 0,
@@ -88,8 +94,47 @@ def cones_agree_as_sets(Ga: np.ndarray, Gb: np.ndarray, *,
     return {"set_max_diff": worst, "set_agree": float(worst <= atol)}
 
 
-def compare(a: BasisResult, b: BasisResult, *, seed: int = 0) -> dict[str, float]:
-    """All four criteria for one pair of fitted cones."""
+def accuracy_gap(dataset, a: BasisResult, b: BasisResult) -> dict[str, float]:
+    """Do two cones that differ *geometrically* also differ in what they achieve?
+
+    This is the criterion that decides whether a set-level divergence matters. Two cones
+    can occupy visibly different positions -- ``set_max_diff`` of 0.2 -- and still
+    represent the snapshot manifold equally well, in which case the algorithm simply has
+    a non-unique output and neither implementation is wrong.
+
+    That is exactly the mCPG case: its generators are *residuals built on earlier
+    generators*, so a small difference in the [UNSPECIFIED] line-9 solve at step ``r``
+    propagates into every later generator and compounds with ``R``. CPG has no such
+    accumulation -- each generator is an independently selected snapshot -- which is why
+    its two implementations stay bit-identical at any ``R``.
+    """
+    from .precision import projection_errors
+
+    out: dict[str, float] = {}
+    if dataset is None:
+        return out
+    scale = dataset.scale
+    for label, cols in (("train", dataset.train()), ("test", dataset.test())):
+        if cols is None:
+            continue
+        ea = float(projection_errors(cols, a.generators).max() / scale)
+        eb = float(projection_errors(cols, b.generators).max() / scale)
+        out[f"{label}_err_a"] = ea
+        out[f"{label}_err_b"] = eb
+        out[f"{label}_err_gap"] = abs(ea - eb) / max(ea, eb, 1e-300)
+    gaps = [v for k, v in out.items() if k.endswith("_err_gap")]
+    if gaps:
+        out["max_err_gap"] = max(gaps)
+    return out
+
+
+def compare(a: BasisResult, b: BasisResult, *, seed: int = 0, dataset=None) -> dict[str, float]:
+    """All four criteria for one pair of fitted cones, plus the accuracy check.
+
+    ``dataset`` is optional only so the geometric criteria can be used standalone; the
+    runner always passes it, because without it a set-level divergence cannot be told
+    apart from a genuine loss of accuracy.
+    """
     row: dict[str, float] = {
         "R_a": float(a.R),
         "R_b": float(b.R),
@@ -127,6 +172,7 @@ def compare(a: BasisResult, b: BasisResult, *, seed: int = 0) -> dict[str, float
         row["raw_max_diff"] = float("nan")
         row["normalized_max_diff"] = float("nan")
 
+    row.update(accuracy_gap(dataset, a, b))
     return row
 
 
@@ -142,14 +188,21 @@ def verdict(row: dict[str, float], pair: tuple[str, str]) -> str:
       [UNSPECIFIED] optimizers behind mCPG line 9. Interchangeable downstream.
     * ``same-cone-different-order`` -- the tie-breaking case both papers leave open
       (item 2 in [BEE20], item 4 in [NDEE22]).
-    * ``divergent`` / ``divergent-cardinality`` -- the cones genuinely differ. Between
-      two CPGs this is a bug; between the two mCPGs it is a real finding about the
-      choice of line-9 solver.
+    * ``different-cone-same-accuracy`` -- the cones differ geometrically but represent
+      the manifold equally well. The algorithm's output is non-unique; neither
+      implementation is wrong. This is the observed mCPG case, and calling it
+      "divergent" would wrongly imply one of the two is defective.
+    * ``divergent`` / ``divergent-cardinality`` -- the cones differ *and* one is
+      measurably worse. Between two CPGs, either is a bug.
     """
     diff = row.get("set_max_diff", float("nan"))
     if not np.isfinite(diff):
         return "not-comparable"
     if diff > SOLVER_ATOL:
+        # A geometric difference is only a real disagreement if it costs accuracy.
+        gap = row.get("max_err_gap", float("nan"))
+        if np.isfinite(gap) and gap <= ACCURACY_RTOL:
+            return "different-cone-same-accuracy"
         return "divergent-cardinality" if row.get("same_R", 0.0) < 1.0 else "divergent"
     if row.get("same_order", 0.0) < 1.0 and np.isfinite(row.get("same_order", float("nan"))):
         return "same-cone-different-order"

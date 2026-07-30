@@ -146,7 +146,8 @@ def run_agreement(dataset: Dataset, *, delta: float) -> list[dict]:
             for key in (a_key, b_key):
                 if key not in cache:
                     cache[key] = METHODS[key].fit(dataset, delta=delta)
-            comparison = metrics.agreement.compare(cache[a_key], cache[b_key])
+            comparison = metrics.agreement.compare(
+                cache[a_key], cache[b_key], dataset=dataset)
             row.update(comparison)
             row["verdict"] = metrics.agreement.verdict(comparison, (a_key, b_key))
         except Exception as exc:                  # noqa: BLE001
@@ -219,6 +220,15 @@ def main(argv=None) -> int:
                     with_infsup=not args.no_infsup,
                     with_determinism=not args.no_determinism))
             print(f"  cardinality R={R} done ({time.perf_counter()-t0:.1f}s)", flush=True)
+
+        # Flush after every dataset. A full grid can run for half an hour -- the
+        # tight-tolerance cells on membrane_2d alone take minutes each -- and writing
+        # only at the end makes the whole run all-or-nothing against an interrupt or a
+        # crash in a later dataset. The manifest is written last and is what marks a
+        # run complete, so a partial results/ directory is recognisable as partial.
+        args.out.mkdir(parents=True, exist_ok=True)
+        _write_csv(args.out / "grid.csv", grid_rows)
+        _write_csv(args.out / "agreement.csv", agree_rows)
 
     args.out.mkdir(parents=True, exist_ok=True)
     _write_csv(args.out / "grid.csv", grid_rows)
