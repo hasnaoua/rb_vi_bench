@@ -568,15 +568,24 @@ def test_reconstruction_figures_render(tmp_path):
     """
     from bench import reconstruction
 
+    methods = ["cpg_ndee22", "adg", "pod_control"]
     rc = reconstruction.main([
-        "--datasets", "toy_bee20", "--methods", "cpg_ndee22", "adg", "pod_control",
+        "--datasets", "toy_bee20", "--methods", *methods,
         "--R", "4", "--split", "--out", str(tmp_path),
     ])
     assert rc == 0
-    assert (tmp_path / "reconstruction_toy_bee20.png").stat().st_size > 5000
-    per_method = sorted(p.name for p in (tmp_path / "toy_bee20").glob("reconstruction_*.png"))
-    assert per_method == ["reconstruction_adg.png", "reconstruction_cpg_ndee22.png",
-                          "reconstruction_pod_control.png"], per_method
+
+    root = tmp_path / "reconstruction"
+    assert (root / "toy_bee20_all_methods.png").stat().st_size > 5000
+    # One directory per method, each holding best.png and worst.png separately.
+    assert sorted(p.name for p in (root / "toy_bee20").iterdir()) == sorted(methods)
+    for m in methods:
+        cases = sorted(p.name for p in (root / "toy_bee20" / m).glob("*.png"))
+        assert cases == ["best.png", "worst.png"], (m, cases)
+        for p in (root / "toy_bee20" / m).glob("*.png"):
+            assert p.stat().st_size > 5000, f"{m}/{p.name} looks empty"
+    # The metric figures live in their own tree and must not be disturbed.
+    assert not (tmp_path / "toy_bee20").exists()
 
 
 def test_reconstruction_ranking_ignores_zero_norm_snapshots(bumps):

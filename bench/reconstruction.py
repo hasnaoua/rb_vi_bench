@@ -65,28 +65,36 @@ def _draw(ax, x, truth, approx, title, color):
     ax.tick_params(labelsize=7)
 
 
-def figure_for_method(dataset, name, method_key, result, columns, out_dir) -> Path | None:
+def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> list[Path]:
+    """One standalone PNG per case, at ``<out>/reconstruction/<dataset>/<method>/``.
+
+    ``best.png`` and ``worst.png`` are written separately rather than as two panels of
+    one image, so either can be dropped into a document without cropping. The
+    reconstruction tree is kept apart from the metric figures: they are indexed by
+    different things (a snapshot here, a cardinality there) and interleaving them in one
+    dataset folder made the directory hard to read.
+    """
     rel, approx = _ranking(dataset, result, columns)
     if np.all(np.isnan(rel)):
-        return None
-    best, worst = int(np.nanargmin(rel)), int(np.nanargmax(rel))
+        return []
     color = STYLE.get(method_key, {}).get("color", "#c0392b")
     x = np.arange(columns.shape[0])
+    method_dir = out_dir / "reconstruction" / _slug(name) / method_key
+    method_dir.mkdir(parents=True, exist_ok=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.0, 3.6))
-    for ax, idx, label in ((axes[0], best, "best"), (axes[1], worst, "worst")):
+    written: list[Path] = []
+    for label, idx in (("best", int(np.nanargmin(rel))), ("worst", int(np.nanargmax(rel)))):
+        fig, ax = plt.subplots(figsize=(6.6, 4.0))
         _draw(ax, x, columns[:, idx], approx[:, idx],
               f"{label}: snapshot {idx}, rel. err {rel[idx]:.3e}", color)
-    axes[0].legend(fontsize=7.5, frameon=False)
-    fig.suptitle(f"{name} — {METHODS[method_key].label} (R={result.R})", fontsize=11)
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
-
-    ds_dir = out_dir / _slug(name)
-    ds_dir.mkdir(parents=True, exist_ok=True)
-    path = ds_dir / f"reconstruction_{method_key}.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return path
+        ax.legend(fontsize=8, frameon=False)
+        fig.suptitle(f"{name} — {METHODS[method_key].label} (R={result.R})", fontsize=10)
+        fig.tight_layout(rect=(0, 0, 1, 0.94))
+        path = method_dir / f"{label}.png"
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        written.append(path)
+    return written
 
 
 def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
@@ -114,7 +122,9 @@ def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
                  f"(R={next(iter(fitted.values())).R}, ranked by per-snapshot rel. error)",
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.985))
-    path = out_dir / f"reconstruction_{_slug(name)}.png"
+    root = out_dir / "reconstruction"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{_slug(name)}_all_methods.png"
     fig.savefig(path, dpi=140, bbox_inches="tight")
     plt.close(fig)
     return path
@@ -163,9 +173,8 @@ def main(argv=None) -> int:
             written.append(path)
         if args.split:
             for m, result in fitted.items():
-                sp = figure_for_method(dataset, dataset.name, m, result, columns, args.out)
-                if sp:
-                    written.append(sp)
+                written.extend(figures_for_method(
+                    dataset, dataset.name, m, result, columns, args.out))
 
     for path in written:
         print(path)
