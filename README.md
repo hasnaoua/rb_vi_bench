@@ -92,7 +92,20 @@ per dataset plus a cross-dataset precision overview:
 .venv/bin/python -m bench.figures --results results --out results/figures --split
 ```
 
-Figures read **matched-cardinality rows only**, so feed them a run with a dense
+Reconstruction figures — best and worst represented snapshot per method, per dataset,
+showing the profile rather than a scalar. These fit directly and need no grid CSV:
+
+```bash
+.venv/bin/python -m bench.reconstruction --R 8 --split --out results/figures
+```
+
+Best/worst are ranked by **per-snapshot** relative error `‖θ−Π_K θ‖/‖θ‖`, not by the
+shared-denominator column the tables report — under a shared denominator a
+small-magnitude snapshot looks well reconstructed merely because it is small, so "worst"
+would just pick the largest snapshot. The two differ by 1.5× on `hertz_pressure` and 70×
+on `physics`, whose snapshot norms span a factor of 604.
+
+Metric figures read **matched-cardinality rows only**, so feed them a run with a dense
 `--cardinalities` grid — the tolerance sweep is what makes the main grid slow, and
 fixed-`R` fits skip it:
 

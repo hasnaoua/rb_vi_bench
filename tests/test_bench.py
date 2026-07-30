@@ -534,6 +534,63 @@ def test_figures_render_from_a_grid(tmp_path, bumps):
             assert p.stat().st_size > 5000, f"{ds}/{p.name} looks empty"
 
 
+def test_reconstruction_uses_the_scored_approximation(bumps):
+    """The plotted reconstruction must be the one the error column actually scored.
+
+    Cone methods and NMF are scored by NNLS projection; POD by unconstrained least
+    squares, because its coefficients carry no sign constraint. If the figure module and
+    the metric module disagreed, a figure would show POD a reconstruction it is not
+    allowed to use -- or show a cone method one that violates its own cone.
+    """
+    from bench.metrics.precision import (projection_errors, reconstruct,
+                                         reconstruction_errors, uses_cone_projection)
+
+    S = bumps.train()
+    for key, expect_cone in (("cpg_ndee22", True), ("nmf_s0", True), ("pod_control", False)):
+        result = METHODS[key].fit(bumps, R=6)
+        assert uses_cone_projection(result) is expect_cone, key
+        approx = reconstruct(S, result.generators, cone=expect_cone)
+        drawn = np.linalg.norm(S - approx, axis=0)
+        scored = (projection_errors if expect_cone else reconstruction_errors)(
+            S, result.generators)
+        assert np.allclose(drawn, scored, atol=1e-9), key
+        if expect_cone:
+            # A cone reconstruction is a non-negative combination of non-negative
+            # generators, so it cannot go negative.
+            assert approx.min() >= -1e-9, key
+
+
+def test_reconstruction_figures_render(tmp_path):
+    """Best/worst figures build, and skip snapshots whose relative error is 0/0.
+
+    physics carries two numerically zero dual snapshots, for which
+    ||theta - Pi(theta)|| / ||theta|| is undefined; ranking must not pick them.
+    """
+    from bench import reconstruction
+
+    rc = reconstruction.main([
+        "--datasets", "toy_bee20", "--methods", "cpg_ndee22", "adg", "pod_control",
+        "--R", "4", "--split", "--out", str(tmp_path),
+    ])
+    assert rc == 0
+    assert (tmp_path / "reconstruction_toy_bee20.png").stat().st_size > 5000
+    per_method = sorted(p.name for p in (tmp_path / "toy_bee20").glob("reconstruction_*.png"))
+    assert per_method == ["reconstruction_adg.png", "reconstruction_cpg_ndee22.png",
+                          "reconstruction_pod_control.png"], per_method
+
+
+def test_reconstruction_ranking_ignores_zero_norm_snapshots(bumps):
+    """A zero snapshot has an undefined relative error and must never be 'worst'."""
+    from bench import reconstruction
+
+    S = np.column_stack([bumps.train(), np.zeros(bumps.dim)])
+    ds = Dataset(name="withzero", snapshots=S)
+    result = METHODS["cpg_ndee22"].fit(ds, R=4)
+    rel, _approx = reconstruction._ranking(ds, result, ds.train())
+    assert np.isnan(rel[-1]), "zero-norm snapshot should have nan relative error"
+    assert int(np.nanargmax(rel)) != len(rel) - 1
+
+
 def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""
     for key, method in METHODS.items():

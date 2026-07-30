@@ -68,6 +68,38 @@ def reconstruction_errors(snapshots: np.ndarray, generators: np.ndarray) -> np.n
     return np.linalg.norm(S - G @ coeffs, axis=0)
 
 
+def uses_cone_projection(result: BasisResult) -> bool:
+    """Is this method scored by cone projection, or by unconstrained least squares?
+
+    Every cone method and NMF (whose atoms are non-negative, so ``span_+`` is the space
+    it actually offers) are scored with NNLS. POD is not: its coefficients carry no sign
+    constraint, and measuring it through a cone projection would score it on a
+    reconstruction it is not allowed to use. Shared so the error columns and the
+    reconstruction figures cannot drift apart.
+    """
+    return result.family != "baseline" or result.method.startswith("nmf")
+
+
+def reconstruct(snapshots: np.ndarray, generators: np.ndarray,
+                cone: bool = True) -> np.ndarray:
+    """The approximation each error column is measured against, as vectors.
+
+    Same two conventions as ``projection_errors`` / ``reconstruction_errors``, so a
+    reconstruction figure always shows exactly what the reported number scored.
+    """
+    S = np.asarray(snapshots, float)
+    G = np.asarray(generators, float)
+    if G.size == 0 or G.shape[1] == 0:
+        return np.zeros_like(S)
+    if not cone:
+        coeffs, *_ = np.linalg.lstsq(G, S, rcond=None)
+        return G @ coeffs
+    out = np.empty_like(S)
+    for q in range(S.shape[1]):
+        out[:, q], _ = project_onto_cone(S[:, q], G, mass=None)
+    return out
+
+
 def nonnegativity_violation(snapshots: np.ndarray, generators: np.ndarray,
                             cone: bool = True) -> dict[str, float]:
     """How far the reduced multiplier strays below zero.
@@ -109,7 +141,7 @@ def evaluate(dataset: Dataset, result: BasisResult) -> dict[str, float]:
     ``delta`` that produced it.
     """
     scale = dataset.scale
-    use_cone = result.family != "baseline" or result.method.startswith("nmf")
+    use_cone = uses_cone_projection(result)
     err_fn = projection_errors if use_cone else reconstruction_errors
 
     train_err = err_fn(dataset.train(), result.generators)
