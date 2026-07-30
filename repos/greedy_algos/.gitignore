@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtualenv
+.venv/
+
+# Tooling caches
+.pytest_cache/
+
+# Raw input data (regenerate/download separately; not versioned)
+data/
+
+# Generated experiment artifacts (regenerate via greedy.pipelines.*)
+results/
+
+# Legacy result dirs (pre-reorg)
+ae_results*/
+angle_greedy_results/
+component_sweep_results/
+nmf_results/
+lambda_cpg_results/
+method_comparison_results/
+merged_lambda_data/
+merged_primal_data/
+
+# Stray outputs
+contact_force_dashboard.html
+cpg_basis_contact.npy
+cpg_selected_contact.txt

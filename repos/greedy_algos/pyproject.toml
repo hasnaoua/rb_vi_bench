@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "greedy-algos"
+version = "0.1.0"
+description = "Greedy model-order-reduction methods (CPG, mCPG, ADG) and experiment pipelines"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+# cvxopt gives mCPG a faster/more-robust QP solve; SciPy SLSQP is used as fallback.
+qp = ["cvxopt"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["greedy*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
