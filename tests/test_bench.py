@@ -522,6 +522,17 @@ def test_figures_render_from_a_grid(tmp_path, bumps):
     for p in out.glob("*.png"):
         assert p.stat().st_size > 5000, f"{p.name} looks empty"
 
+    # --split: one standalone PNG per metric, in a per-dataset directory.
+    split_out = tmp_path / "split"
+    assert figures.main(["--results", str(tmp_path), "--out", str(split_out),
+                         "--split", "--no-panel"]) == 0
+    assert not list(split_out.glob("*.png")), "--no-panel still wrote combined figures"
+    for ds in ("bumps", "nosplit"):
+        names = sorted(p.stem for p in (split_out / ds).glob("*.png"))
+        assert names == ["conditioning", "offline_cost", "orthogonality", "precision"], names
+        for p in (split_out / ds).glob("*.png"):
+            assert p.stat().st_size > 5000, f"{ds}/{p.name} looks empty"
+
 
 def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""

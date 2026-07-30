@@ -84,6 +84,22 @@ cardinalities), then render it:
 .venv/bin/python -m bench.report --results results
 ```
 
+Figures (metric vs cardinality, one line per method). `--split` writes one standalone
+PNG per metric under `<out>/<dataset>/`; without it you get a combined four-panel figure
+per dataset plus a cross-dataset precision overview:
+
+```bash
+.venv/bin/python -m bench.figures --results results --out results/figures --split
+```
+
+Figures read **matched-cardinality rows only**, so feed them a run with a dense
+`--cardinalities` grid — the tolerance sweep is what makes the main grid slow, and
+fixed-`R` fits skip it:
+
+```bash
+.venv/bin/python -m bench.runner --deltas --cardinalities 1 2 3 4 5 6 8 10 12 14 16 20 24 28 32 40 --no-infsup --no-determinism --subsample 200 --out results/sweep
+```
+
 Useful flags: `--datasets`, `--methods`, `--deltas`, `--cardinalities`, `--no-infsup`,
 `--no-determinism`, and `--subsample N` to cap the training set (it changes the numbers
 and is recorded in `results/manifest.json`).

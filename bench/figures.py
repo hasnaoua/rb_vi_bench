@@ -170,11 +170,55 @@ def figure_for_dataset(dataset: str, series, out_dir: Path) -> Path:
              ha="center", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.93))
 
-    safe = dataset.replace("[", "_").replace("]", "").replace("<", "").replace("=", "")
-    path = out_dir / f"cardinality_{safe}.png"
+    path = out_dir / f"cardinality_{_slug(dataset)}.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return path
+
+
+def _slug(dataset: str) -> str:
+    return (dataset.replace("[", "_").replace("]", "")
+            .replace("<", "").replace("=", "").replace(" ", ""))
+
+
+def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
+    """One standalone PNG per metric, under ``<out_dir>/<dataset>/``.
+
+    Same content as the four-panel figure, but each metric gets its own axes and its own
+    file -- the form you want for dropping a single curve into a document, where a 2x2
+    grid would have to be cropped.
+    """
+    err_col, err_title = error_column(series)
+    ds_dir = out_dir / _slug(dataset)
+    ds_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[Path] = []
+    for column, ylabel, yscale, title in PANELS:
+        name = column
+        if column == "test_max_rel_err":
+            column, title = err_col, err_title
+            name = "precision"
+        elif column == "gram_cond":
+            name = "conditioning"
+        elif column == "e_orth_mean":
+            name = "orthogonality"
+        elif column == "calls_total":
+            name = "offline_cost"
+
+        fig, ax = plt.subplots(figsize=(7.0, 4.6))
+        plotted = _panel(ax, series, column, ylabel, yscale, title,
+                         dashed_train=(column == "test_max_rel_err"))
+        if not plotted:
+            plt.close(fig)
+            continue
+        ax.set_title(f"{dataset} — {title}", fontsize=11)
+        ax.legend(fontsize=7.5, ncol=2, frameon=False, loc="best")
+        fig.tight_layout()
+        path = ds_dir / f"{name}.png"
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        written.append(path)
+    return written
 
 
 def figure_precision_overview(all_series, out_dir: Path) -> Path:
@@ -207,6 +251,10 @@ def main(argv=None) -> int:
                    help="directory holding grid.csv")
     p.add_argument("--out", type=Path, default=None,
                    help="where to write PNGs (default: <results>/figures)")
+    p.add_argument("--split", action="store_true",
+                   help="also write one PNG per metric under <out>/<dataset>/")
+    p.add_argument("--no-panel", action="store_true",
+                   help="skip the combined four-panel and overview figures")
     args = p.parse_args(argv)
 
     grid = args.results / "grid.csv"
@@ -226,8 +274,12 @@ def main(argv=None) -> int:
 
     written = []
     for dataset in sorted(all_series):
-        written.append(figure_for_dataset(dataset, all_series[dataset], out_dir))
-    written.append(figure_precision_overview(all_series, out_dir))
+        if not args.no_panel:
+            written.append(figure_for_dataset(dataset, all_series[dataset], out_dir))
+        if args.split:
+            written.extend(figures_split(dataset, all_series[dataset], out_dir))
+    if not args.no_panel:
+        written.append(figure_precision_overview(all_series, out_dir))
 
     n_pts = {d: max((len(v) for v in s.values()), default=0) for d, s in all_series.items()}
     thin = [d for d, n in n_pts.items() if n < 4]
