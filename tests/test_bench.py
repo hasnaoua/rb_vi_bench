@@ -516,21 +516,21 @@ def test_figures_render_from_a_grid(tmp_path, bumps):
 
     out = tmp_path / "figs"
     assert figures.main(["--results", str(tmp_path), "--out", str(out)]) == 0
-    written = sorted(p.name for p in out.glob("*.png"))
-    assert "overview_precision.png" in written
-    assert any(n.startswith("cardinality_") for n in written)
-    for p in out.glob("*.png"):
-        assert p.stat().st_size > 5000, f"{p.name} looks empty"
+    # Everything is grouped per dataset; the only cross-dataset figure is under _overview.
+    assert (out / "_overview" / "precision_all_datasets.png").stat().st_size > 5000
+    for ds in ("bumps", "nosplit"):
+        assert (out / ds / "panel.png").stat().st_size > 5000
 
-    # --split: one standalone PNG per metric, in a per-dataset directory.
+    # --split: one standalone PNG per metric, under <dataset>/metrics/.
     split_out = tmp_path / "split"
     assert figures.main(["--results", str(tmp_path), "--out", str(split_out),
                          "--split", "--no-panel"]) == 0
-    assert not list(split_out.glob("*.png")), "--no-panel still wrote combined figures"
+    assert not (split_out / "_overview").exists(), "--no-panel still wrote the overview"
     for ds in ("bumps", "nosplit"):
-        names = sorted(p.stem for p in (split_out / ds).glob("*.png"))
+        assert not (split_out / ds / "panel.png").exists(), "--no-panel wrote a panel"
+        names = sorted(p.stem for p in (split_out / ds / "metrics").glob("*.png"))
         assert names == ["conditioning", "offline_cost", "orthogonality", "precision"], names
-        for p in (split_out / ds).glob("*.png"):
+        for p in (split_out / ds / "metrics").glob("*.png"):
             assert p.stat().st_size > 5000, f"{ds}/{p.name} looks empty"
 
 
@@ -575,17 +575,15 @@ def test_reconstruction_figures_render(tmp_path):
     ])
     assert rc == 0
 
-    root = tmp_path / "reconstruction"
-    assert (root / "toy_bee20_all_methods.png").stat().st_size > 5000
+    root = tmp_path / "toy_bee20" / "reconstruction"
+    assert (root / "all_methods.png").stat().st_size > 5000
     # One directory per method, each holding best.png and worst.png separately.
-    assert sorted(p.name for p in (root / "toy_bee20").iterdir()) == sorted(methods)
+    assert sorted(p.name for p in root.iterdir() if p.is_dir()) == sorted(methods)
     for m in methods:
-        cases = sorted(p.name for p in (root / "toy_bee20" / m).glob("*.png"))
+        cases = sorted(p.name for p in (root / m).glob("*.png"))
         assert cases == ["best.png", "worst.png"], (m, cases)
-        for p in (root / "toy_bee20" / m).glob("*.png"):
+        for p in (root / m).glob("*.png"):
             assert p.stat().st_size > 5000, f"{m}/{p.name} looks empty"
-    # The metric figures live in their own tree and must not be disturbed.
-    assert not (tmp_path / "toy_bee20").exists()
 
 
 def test_reconstruction_ranking_ignores_zero_norm_snapshots(bumps):
@@ -598,6 +596,55 @@ def test_reconstruction_ranking_ignores_zero_norm_snapshots(bumps):
     rel, _approx = reconstruction._ranking(ds, result, ds.train())
     assert np.isnan(rel[-1]), "zero-norm snapshot should have nan relative error"
     assert int(np.nanargmax(rel)) != len(rel) - 1
+
+
+def test_decrement_skips_non_consecutive_cardinalities():
+    """``e(R+4) - e(R)`` is four generators' worth and must not be plotted as one.
+
+    The metric sweep uses a sparse R grid, so a decrement figure built from it would
+    silently mix per-generator steps with multi-generator ones.
+    """
+    from bench.decrement import decrements_vs_cardinality
+
+    xs, ys = decrements_vs_cardinality([(1, 0.5), (2, 0.4), (3, 0.35), (7, 0.2), (8, 0.19)])
+    assert xs == [2, 3, 8], xs
+    assert ys == pytest.approx([-0.1, -0.05, -0.01])
+
+
+def test_decrement_symlog_band_is_relative_to_the_largest_step():
+    """Anchoring the linear band to the smallest step puts it at the float-noise floor."""
+    from bench.decrement import _symlog_threshold
+
+    assert _symlog_threshold([-1e-2, -1e-3, -1e-16, 0.0]) == pytest.approx(1e-4)
+    assert _symlog_threshold([]) > 0
+    assert _symlog_threshold([0.0, 0.0]) > 0
+
+
+def test_decrement_figures_render(tmp_path, bumps):
+    """Both axes render, into the per-dataset decrement/ folder."""
+    from bench import decrement
+    from bench.runner import _write_csv, run_cell
+
+    card, tol = [], []
+    for R in range(1, 7):
+        for m in ("cpg_ndee22", "mcpg_ndee22", "adg"):
+            card.append(run_cell(bumps, m, R=R, with_infsup=False, with_determinism=False))
+    for d in (0.4, 0.2, 0.1):
+        for m in ("cpg_ndee22", "mcpg_ndee22", "adg"):
+            tol.append(run_cell(bumps, m, delta=d, with_infsup=False, with_determinism=False))
+
+    (tmp_path / "c").mkdir()
+    (tmp_path / "t").mkdir()
+    _write_csv(tmp_path / "c" / "grid.csv", card)
+    _write_csv(tmp_path / "t" / "grid.csv", tol)
+
+    out = tmp_path / "figs"
+    assert decrement.main(["--cardinality-results", str(tmp_path / "c"),
+                           "--tolerance-results", str(tmp_path / "t"),
+                           "--out", str(out)]) == 0
+    for name in ("vs_cardinality.png", "vs_tolerance.png"):
+        p = out / "bumps" / "decrement" / name
+        assert p.stat().st_size > 5000, name
 
 
 def test_registry_is_self_consistent():

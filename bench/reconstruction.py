@@ -36,9 +36,9 @@ from . import _paths  # noqa: F401  -- forces Agg before pyplot
 import matplotlib.pyplot as plt
 import numpy as np
 
-from . import datasets as ds_mod
+from . import datasets as ds_mod, layout
 from .adapters import METHODS
-from .figures import STYLE, _slug
+from .figures import STYLE
 from .metrics.precision import reconstruct, uses_cone_projection
 from .runner import _subsample
 
@@ -79,8 +79,7 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
         return []
     color = STYLE.get(method_key, {}).get("color", "#c0392b")
     x = np.arange(columns.shape[0])
-    method_dir = out_dir / "reconstruction" / _slug(name) / method_key
-    method_dir.mkdir(parents=True, exist_ok=True)
+    method_dir = layout.ensure(layout.method_dir(out_dir, name, method_key))
 
     written: list[Path] = []
     for label, idx in (("best", int(np.nanargmin(rel))), ("worst", int(np.nanargmax(rel)))):
@@ -122,9 +121,7 @@ def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
                  f"(R={next(iter(fitted.values())).R}, ranked by per-snapshot rel. error)",
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.985))
-    root = out_dir / "reconstruction"
-    root.mkdir(parents=True, exist_ok=True)
-    path = root / f"{_slug(name)}_all_methods.png"
+    path = layout.ensure(layout.reconstruction_dir(out_dir, name)) / "all_methods.png"
     fig.savefig(path, dpi=140, bbox_inches="tight")
     plt.close(fig)
     return path

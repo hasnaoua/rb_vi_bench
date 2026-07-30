@@ -33,6 +33,8 @@ from . import _paths  # noqa: F401  -- forces the Agg backend before pyplot is i
 import matplotlib.pyplot as plt
 import numpy as np
 
+from . import layout
+
 RESULTS = _paths.ROOT / "results"
 
 # Stable per-method styling, so a method keeps its colour across every figure.
@@ -170,15 +172,14 @@ def figure_for_dataset(dataset: str, series, out_dir: Path) -> Path:
              ha="center", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.93))
 
-    path = out_dir / f"cardinality_{_slug(dataset)}.png"
+    path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "panel.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return path
 
 
-def _slug(dataset: str) -> str:
-    return (dataset.replace("[", "_").replace("]", "")
-            .replace("<", "").replace("=", "").replace(" ", ""))
+#: Kept as an alias so existing imports keep working; the layout module owns it now.
+_slug = layout.slug
 
 
 def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
@@ -189,8 +190,7 @@ def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
     grid would have to be cropped.
     """
     err_col, err_title = error_column(series)
-    ds_dir = out_dir / _slug(dataset)
-    ds_dir.mkdir(parents=True, exist_ok=True)
+    ds_dir = layout.ensure(layout.metrics_dir(out_dir, dataset))
 
     written: list[Path] = []
     for column, ylabel, yscale, title in PANELS:
@@ -239,7 +239,7 @@ def figure_precision_overview(all_series, out_dir: Path) -> Path:
                bbox_to_anchor=(0.5, -0.01))
     fig.suptitle("Precision vs cardinality, all datasets (matched-R mode)", fontsize=13)
     fig.tight_layout(rect=(0, 0.05, 1, 0.96))
-    path = out_dir / "overview_precision.png"
+    path = layout.ensure(layout.overview_dir(out_dir)) / "precision_all_datasets.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return path

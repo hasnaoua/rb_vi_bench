@@ -19,6 +19,20 @@ rb_vi_bench/
 └── results/                generated output (gitignored)
 ```
 
+Figures are grouped **per dataset**, since comparing methods only makes sense within one:
+
+```
+results/figures/
+├── _overview/precision_all_datasets.png     the only cross-dataset figure
+└── <dataset>/
+    ├── panel.png                            four metrics in one grid
+    ├── metrics/      precision.png  conditioning.png  orthogonality.png  offline_cost.png
+    ├── decrement/    vs_cardinality.png  vs_tolerance.png
+    └── reconstruction/
+        ├── all_methods.png
+        └── <method>/  best.png  worst.png
+```
+
 ## The two papers, and the tag convention
 
 Everything here is tagged with the paper it comes from, and the tags are load-bearing:
@@ -91,6 +105,22 @@ per dataset plus a cross-dataset precision overview:
 ```bash
 .venv/bin/python -m bench.figures --results results --out results/figures --split
 ```
+
+Marginal decrement `e(n+1) − e(n)` — what the next generator actually buys, all methods
+on one axis, against both `R` and `ε`:
+
+```bash
+.venv/bin/python -m bench.decrement --cardinality-results results/sweep_dense --tolerance-results results
+```
+
+The `R` axis needs a sweep run with **consecutive** `--cardinalities 1 2 3 … N`;
+non-consecutive steps are skipped rather than divided through, since `e(R+4) − e(R)` is
+four generators' worth. The decrement is taken on the **training** error — the quantity a
+greedy monotonically drives down — because the test error plateaus and differencing it
+yields mostly round-off. Two consequences are real data, not noise: ADG admits tied
+snapshots in **batches**, so an intermediate `R` can add a generator that changes nothing
+followed by one that drops the error sharply; and NMF is refitted at every `R`, so its
+decrement goes genuinely positive — the non-hierarchy `[BEE20]` §5 objects to.
 
 Reconstruction figures — best and worst represented snapshot per method, per dataset,
 showing the profile rather than a scalar. These fit directly and need no grid CSV:
