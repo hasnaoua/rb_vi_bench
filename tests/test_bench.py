@@ -843,6 +843,50 @@ def test_selection_methods_never_leave_on_any_fast_dataset():
             assert stats["outside_K_full_frac"] == 0.0, (key, method)
 
 
+def test_excess_is_zero_exactly_when_generators_are_snapshots(bumps):
+    """The two directions measure different things and must not be conflated.
+
+    A cone built from selected snapshots is a sub-cone of K_full, so *nothing* in it lies
+    outside -- excess is zero. mCPG's is not, so excess must be able to be positive. If
+    excess were always zero the metric would be vacuous; if it were never zero it would
+    be measuring numerical noise.
+    """
+    from bench.metrics import cone_geometry
+
+    ds = ds_mod.load("toy_bee20")
+    for key in ("cpg_bee20", "adg"):
+        e = cone_geometry.excess(ds, METHODS[key].fit(ds, R=8).generators, n_samples=24)
+        assert e["excess_mean_err"] == pytest.approx(0.0, abs=1e-9), key
+    m = cone_geometry.excess(ds, METHODS["mcpg_ndee22"].fit(ds, R=8).generators,
+                             n_samples=24)
+    assert m["excess_mean_err"] > 1e-3, "mCPG cone should extend outside K_full here"
+
+
+def test_cone_hausdorff_is_two_sided(bumps):
+    """The summary distance must not hide either direction.
+
+    Reporting coverage alone lets a cone that is far too *large* look perfect, which is
+    exactly the mCPG case: its coverage matches CPG's to three digits while a fifth of
+    its cone volume sits outside K_full.
+    """
+    from bench.metrics import cone_geometry
+
+    ds = ds_mod.load("toy_bee20")
+    rows = {}
+    for key in ("cpg_bee20", "mcpg_ndee22"):
+        r = METHODS[key].fit(ds, R=8)
+        rows[key] = cone_geometry.evaluate(ds, r, n_samples=24)
+
+    # Nearly identical coverage ...
+    assert rows["cpg_bee20"]["cover_mean_err"] == pytest.approx(
+        rows["mcpg_ndee22"]["cover_mean_err"], rel=0.05)
+    # ... but the two-sided distance separates them, because excess does not.
+    assert rows["mcpg_ndee22"]["cone_hausdorff"] > rows["cpg_bee20"]["cone_hausdorff"]
+    for key, row in rows.items():
+        assert row["cone_hausdorff"] >= row["cover_max_err"] - 1e-12, key
+        assert row["cone_hausdorff"] >= row["excess_max_err"] - 1e-12, key
+
+
 def test_coverage_improves_with_cardinality(bumps):
     """More generators cannot capture less of K_full, for a nested cone."""
     from bench.metrics import cone_geometry

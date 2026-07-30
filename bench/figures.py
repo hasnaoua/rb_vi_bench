@@ -55,15 +55,20 @@ STYLE: dict[str, dict] = {
 
 #: Cone-geometry panels: how much of ``span_+{all snapshots}`` a reduced cone captures,
 #: how wide it opens, and how far it reaches outside. See ``metrics.cone_geometry``.
+#: Both directions are shown, because neither implies the other: a cone can cover
+#: ``K_full`` perfectly while extending far beyond it, or sit strictly inside while
+#: missing most of it. ``excess`` uses a LINEAR axis on purpose -- it is exactly zero for
+#: any method whose generators are snapshots, and a log axis would drop those series
+#: entirely, making "contains no excess" indistinguishable from "not measured".
 CONE_PANELS = (
-    ("cover_mean_err",      "mean residual on $K_{full}$",   "log",
-     "coverage of the full cone"),
-    ("cover_frac_within_10pct", "fraction within 10%",       "linear",
-     "sampled cone captured to 10%"),
-    ("aperture_mean_deg",   "mean pairwise angle [deg]",     "linear",
+    ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "log",
+     "how much of the full cone is MISSED (too small)"),
+    ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "linear",
+     "how much of the cone lies OUTSIDE (too large)"),
+    ("cone_hausdorff",    "two-sided distance",                "log",
+     r"$\max$(missed, excess) — 0 iff the cones coincide"),
+    ("aperture_mean_deg", "mean pairwise angle [deg]",         "linear",
      "aperture (how wide the cone opens)"),
-    ("outside_K_full_frac", r"fraction of generators outside", "linear",
-     r"reach outside $K_{full}$"),
 )
 
 PANELS = (
@@ -255,8 +260,8 @@ def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
                bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(f"{dataset} — cone geometry vs cardinality", fontsize=12)
     fig.text(0.5, 0.945,
-             r"coverage: how much of $span_+\{$all snapshots$\}$ is captured;  "
-             r"outside: generators no non-negative combination of snapshots can reach",
+             r"$K_{full}=span_+\{$all snapshots$\}$.  Both directions shown: neither "
+             r"implies the other, and lower is better in both.",
              ha="center", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.93))
     path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "cone_geometry.png"

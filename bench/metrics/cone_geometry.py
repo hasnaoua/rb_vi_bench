@@ -111,6 +111,44 @@ def coverage(dataset: Dataset, generators: np.ndarray, *,
     }
 
 
+def excess(dataset: Dataset, generators: np.ndarray, *,
+           n_samples: int = 48, seed: int = 1) -> dict[str, float]:
+    """The other half of the comparison: how far ``K_R`` sticks out of ``K_full``.
+
+    ``coverage`` samples ``K_full`` and projects onto ``K_R``, so it measures what the
+    reduced cone **misses** -- how much too *small* it is. This samples ``K_R`` and
+    projects onto ``K_full``, measuring what the reduced cone **adds** -- how much too
+    *large* it is. The two are not redundant and neither implies the other: a cone can
+    cover ``K_full`` perfectly while extending far beyond it, or sit strictly inside it
+    while missing most of it.
+
+    Together they bracket the cones from both sides, and
+    ``max(cover_max_err, excess_max_err)`` is a Hausdorff-type distance between them on
+    the unit sphere -- zero exactly when the two cones coincide.
+
+    This is strictly stronger than the generator-level ``reach_outside``. That checks
+    only the extreme rays; a cone whose generators all lie in ``K_full`` necessarily has
+    zero excess, but the converse direction carries real information -- excess measures
+    how much *volume* lies outside, not merely how many rays do.
+    """
+    G = np.asarray(generators, float)
+    if G.size == 0 or G.shape[1] == 0:
+        return {}
+    pts = _sample_cone(G, n_samples, seed)
+    if pts.shape[1] == 0:
+        return {}
+    full = dataset.train()
+    res = np.empty(pts.shape[1])
+    for k in range(pts.shape[1]):
+        proj, _ = project_onto_cone(pts[:, k], full, mass=None)
+        res[k] = np.linalg.norm(pts[:, k] - proj)      # samples are unit norm
+    return {
+        "excess_mean_err": float(res.mean()),
+        "excess_max_err": float(res.max()),
+        "excess_frac_outside_10pct": float(np.mean(res > 0.10)),
+    }
+
+
 def aperture(generators: np.ndarray) -> dict[str, float]:
     """Pairwise angles between normalized generators, in degrees."""
     G = np.asarray(generators, float)
@@ -173,6 +211,11 @@ def evaluate(dataset: Dataset, result: BasisResult, *,
     """Cone-geometry row for one (dataset, method) cell."""
     row: dict[str, float] = {}
     row.update(coverage(dataset, result.generators, n_samples=n_samples, seed=seed))
+    row.update(excess(dataset, result.generators, n_samples=n_samples, seed=seed + 1))
     row.update(aperture(result.generators))
     row.update(reach_outside(dataset, result.generators))
+    # Two-sided: zero exactly when K_R and K_full coincide. Reporting only one direction
+    # lets a cone look perfect while being much too small, or much too large.
+    if "cover_max_err" in row and "excess_max_err" in row:
+        row["cone_hausdorff"] = max(row["cover_max_err"], row["excess_max_err"])
     return row
