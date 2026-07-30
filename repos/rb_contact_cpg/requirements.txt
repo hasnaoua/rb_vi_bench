@@ -1,0 +1,11 @@
+# Verified against numpy 1.26.4 / scipy 1.11.4 on Python 3.12.
+numpy>=1.24
+scipy>=1.10
+
+# The authors used cvxopt for the cone projection (Remark 6, and Section 6:
+# "the reduced-order modeling algorithms have been developed in Python using the
+# convex optimization package cvxopt [1]"). It is NOT required here --
+# scipy.optimize.nnls solves the same problem for the L2 norm. Install it only
+# if you switch norm_Lambda to the linf choice, where the projection becomes a
+# linear program that nnls cannot express.
+# cvxopt>=1.3
