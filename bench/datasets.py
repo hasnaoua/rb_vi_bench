@@ -42,7 +42,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import _paths
+from . import _paths, geometry
 from .types import Dataset
 
 
@@ -242,9 +242,13 @@ def _physics() -> Dataset:
     return Dataset(
         name="physics",
         snapshots=S,
-        description="physics contact forces, 7676 dofs x 96 snapshots (no split, by design)",
+        description="pellet-cladding contact, 76x101 quarter sector (no split, by design)",
         paper="greedy_algos / physics_data",
         params=np.asarray(d["radii"], float).reshape(-1, 1),
+        # The 7676 entries are a structured theta x z grid, not a sequence; see
+        # bench.geometry. Without this they would be drawn against a component index,
+        # which slices the cladding surface into 76 strips laid end to end.
+        geometry=geometry.physics_geometry(),
     )
 
 
@@ -273,6 +277,8 @@ def _membrane_2d() -> Dataset:
         train_idx=np.setdiff1d(idx, test_idx),
         test_idx=test_idx,
         primal_snapshots=np.asarray(U, float).T,
+        # Contact nodes are scattered inside the obstacle disc, not on a tensor grid.
+        geometry=geometry.scatter_geometry(hf.cnode_coords),
     )
 
 
@@ -291,8 +297,10 @@ def _hertz_2d() -> Dataset:
     hf = HertzHF(nr=18, na=60)
     params = training_grid()[::2]         # 41 of the 81 paper parameters
     L = []
+    arc_x = None
     for mu in params:
-        lam, _x, _gap = hf.solve(mu)
+        lam, x, _gap = hf.solve(mu)
+        arc_x = x
         L.append(lam)
     S = np.asarray(L, float).T
     idx = np.arange(S.shape[1])
@@ -305,6 +313,9 @@ def _hertz_2d() -> Dataset:
         params=params.reshape(-1, 1),
         train_idx=np.setdiff1d(idx, test_idx),
         test_idx=test_idx,
+        # Genuinely 1-D contact, but along an arc: plot against the physical abscissa,
+        # not the node index.
+        geometry=geometry.line_geometry(arc_x, xlabel="contact abscissa $x$"),
     )
 
 

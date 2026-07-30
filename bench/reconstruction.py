@@ -36,7 +36,7 @@ from . import _paths  # noqa: F401  -- forces Agg before pyplot
 import matplotlib.pyplot as plt
 import numpy as np
 
-from . import datasets as ds_mod, layout
+from . import datasets as ds_mod, geometry, layout
 from .adapters import DEFAULT_METHODS, METHODS
 from .figures import STYLE
 from .metrics.precision import reconstruct, uses_cone_projection
@@ -55,14 +55,48 @@ def _ranking(dataset, result, columns) -> tuple[np.ndarray, np.ndarray]:
     return rel, approx
 
 
-def _draw(ax, x, truth, approx, title, color):
+def _geom(dataset):
+    """The dataset's field geometry, defaulting to an index-ordered curve."""
+    return getattr(dataset, "geometry", None) or geometry.line_geometry()
+
+
+def _draw(ax, x, truth, approx, title, color, geom=None):
+    """Curve rendering: the truth and its reconstruction overlaid.
+
+    ``x`` is the physical abscissa when the dataset supplies one, and the node index
+    otherwise -- a distinction that only matters where the nodes are unevenly spaced,
+    as on the Hertz contact arc.
+    """
+    geom = geom or geometry.line_geometry()
     ax.plot(x, truth, color="#222222", lw=1.6, label="snapshot")
     ax.plot(x, approx, color=color, lw=1.3, ls="--", label="reconstruction")
     ax.fill_between(x, truth, approx, color=color, alpha=0.18, lw=0)
     ax.set_title(title, fontsize=9)
     ax.grid(alpha=0.25, lw=0.5)
-    ax.set_xlabel("component index", fontsize=8)
+    ax.set_xlabel(geom.xlabel, fontsize=8)
     ax.tick_params(labelsize=7)
+
+
+def _draw_field_triptych(fig, axes, truth, approx, geom, title):
+    """HF | ROM | error, on a shared colour scale -- the publication convention.
+
+    The first two panels share limits so they are visually comparable; the error panel
+    gets its own, since it is typically orders of magnitude smaller and would be a flat
+    field on the shared scale.
+    """
+    vmin, vmax = geometry.field_limits([truth, approx], geom)
+    err = np.abs(truth - approx)
+    for ax, values, label, lo, hi in (
+        (axes[0], truth, "HF snapshot", vmin, vmax),
+        (axes[1], approx, "reconstruction", vmin, vmax),
+        (axes[2], err, "|error|", *geometry.field_limits([err], geom)),
+    ):
+        im = geometry.draw_field(ax, values, geom, vmin=lo, vmax=hi)
+        ax.set_title(label, fontsize=9)
+        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+        cb.ax.tick_params(labelsize=6)
+    axes[0].set_ylabel(geom.ylabel, fontsize=8)
+    fig.suptitle(title, fontsize=10)
 
 
 def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> list[Path]:
@@ -78,17 +112,25 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
     if np.all(np.isnan(rel)):
         return []
     color = STYLE.get(method_key, {}).get("color", "#c0392b")
-    x = np.arange(columns.shape[0])
+    geom = _geom(dataset)
+    x = geom.coords if geom.coords is not None else np.arange(columns.shape[0])
     method_dir = layout.ensure(layout.method_dir(out_dir, name, method_key))
 
     written: list[Path] = []
     for label, idx in (("best", int(np.nanargmin(rel))), ("worst", int(np.nanargmax(rel)))):
-        fig, ax = plt.subplots(figsize=(6.6, 4.0))
-        _draw(ax, x, columns[:, idx], approx[:, idx],
-              f"{label}: snapshot {idx}, rel. err {rel[idx]:.3e}", color)
-        ax.legend(fontsize=8, frameon=False)
-        fig.suptitle(f"{name} — {METHODS[method_key].label} (R={result.R})", fontsize=10)
-        fig.tight_layout(rect=(0, 0, 1, 0.94))
+        head = (f"{name} — {METHODS[method_key].label} (R={result.R})\n"
+                f"{label}: snapshot {idx}, rel. err {rel[idx]:.3e}")
+        if geom.is_field:
+            fig, axes = plt.subplots(1, 3, figsize=(13.0, 3.4))
+            _draw_field_triptych(fig, axes, columns[:, idx], approx[:, idx], geom, head)
+            fig.tight_layout(rect=(0, 0, 1, 0.88))
+        else:
+            fig, ax = plt.subplots(figsize=(6.6, 4.0))
+            _draw(ax, x, columns[:, idx], approx[:, idx],
+                  f"{label}: snapshot {idx}, rel. err {rel[idx]:.3e}", color, geom)
+            ax.legend(fontsize=8, frameon=False)
+            fig.suptitle(f"{name} — {METHODS[method_key].label} (R={result.R})", fontsize=10)
+            fig.tight_layout(rect=(0, 0, 1, 0.94))
         path = method_dir / f"{label}.png"
         fig.savefig(path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -96,14 +138,65 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
     return written
 
 
+def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> Path | None:
+    """Field version: rows are methods, columns are the best and worst |error| fields.
+
+    Error fields rather than reconstructions, on **one shared colour scale** across every
+    method, because that is what makes the panels comparable -- each method's own
+    reconstruction looks near-identical to the HF snapshot at this scale, and the
+    difference is the whole content. The HF snapshot itself is drawn once on the top row
+    for reference.
+    """
+    keys = list(fitted)
+    errs: dict[str, tuple[int, int, np.ndarray, np.ndarray]] = {}
+    for key in keys:
+        rel, approx = _ranking(dataset, fitted[key], columns)
+        if np.all(np.isnan(rel)):
+            continue
+        b, w = int(np.nanargmin(rel)), int(np.nanargmax(rel))
+        errs[key] = (b, w, np.abs(columns[:, b] - approx[:, b]),
+                     np.abs(columns[:, w] - approx[:, w]))
+    if not errs:
+        return None
+
+    lo, hi = geometry.field_limits([e for v in errs.values() for e in v[2:]], geom)
+    n = len(errs) + 1
+    fig, axes = plt.subplots(n, 2, figsize=(9.6, 2.6 * n), squeeze=False)
+
+    any_best = next(iter(errs.values()))[0]
+    any_worst = next(iter(errs.values()))[1]
+    for ax, idx, lbl in ((axes[0][0], any_best, "best"), (axes[0][1], any_worst, "worst")):
+        vmin, vmax = geometry.field_limits([columns[:, idx]], geom)
+        im = geometry.draw_field(ax, columns[:, idx], geom, vmin=vmin, vmax=vmax)
+        ax.set_title(f"HF snapshot #{idx} ({lbl} case)", fontsize=9)
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03).ax.tick_params(labelsize=6)
+
+    for row, (key, (b, w, eb, ew)) in enumerate(errs.items(), start=1):
+        for ax, idx, e, lbl in ((axes[row][0], b, eb, "best"), (axes[row][1], w, ew, "worst")):
+            im = geometry.draw_field(ax, e, geom, vmin=lo, vmax=hi, cmap="magma")
+            ax.set_title(f"{METHODS[key].label} — |error|, {lbl} #{idx}", fontsize=8)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03).ax.tick_params(labelsize=6)
+
+    fig.suptitle(f"{name} — reconstruction error fields "
+                 f"(R={next(iter(fitted.values())).R}, shared colour scale)", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.975))
+    path = layout.ensure(layout.reconstruction_dir(out_dir, name)) / "all_methods.png"
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
 def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
     """All methods in one figure: rows are methods, columns are best / worst."""
     keys = [k for k in fitted]
     if not keys:
         return None
+    geom = _geom(dataset)
+    if geom.is_field:
+        return _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom)
     fig, axes = plt.subplots(len(keys), 2, figsize=(11.0, 2.5 * len(keys)),
                              squeeze=False)
-    x = np.arange(columns.shape[0])
+    x = geom.coords if geom.coords is not None else np.arange(columns.shape[0])
     for row, key in enumerate(keys):
         result = fitted[key]
         rel, approx = _ranking(dataset, result, columns)
@@ -115,7 +208,7 @@ def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
         best, worst = int(np.nanargmin(rel)), int(np.nanargmax(rel))
         for ax, idx, label in ((axes[row][0], best, "best"), (axes[row][1], worst, "worst")):
             _draw(ax, x, columns[:, idx], approx[:, idx],
-                  f"{METHODS[key].label} — {label}: #{idx}, {rel[idx]:.2e}", color)
+                  f"{METHODS[key].label} — {label}: #{idx}, {rel[idx]:.2e}", color, geom)
     axes[0][0].legend(fontsize=7.5, frameon=False)
     fig.suptitle(f"{name} — best / worst reconstruction per method "
                  f"(R={next(iter(fitted.values())).R}, ranked by per-snapshot rel. error)",

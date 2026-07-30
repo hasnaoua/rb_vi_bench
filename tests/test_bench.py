@@ -689,6 +689,62 @@ def test_agreement_still_runs_outside_the_default_set(bumps):
     assert all(not r["skip_reason"] for r in rows)
 
 
+def test_physics_reshape_matches_the_repository_convention():
+    """The theta x z reshape must be greedy_algos', not a plausible-looking transpose.
+
+    physics snapshots are 7676 = 76 x 101 nodes on a quarter-cylinder contact surface,
+    not a sequence. Transposing would still produce a 2-D image, and a wrong one -- so
+    this is pinned against the function the repository's own publication figures use.
+    """
+    from greedy.datasets.physics_dataset import reshape_contact_surface
+
+    from bench import geometry
+
+    ds = ds_mod.load("physics")
+    geom = ds.geometry
+    assert geom.kind == "grid" and geom.shape == (76, 101)
+    assert geom.log, "contact pressures span decades; a linear scale saturates"
+
+    v = ds.snapshots[:, 0]
+    assert np.array_equal(geometry.as_surface(v, geom), reshape_contact_surface(v))
+
+    # extent is (z_min, z_max, theta_min, theta_max) in mm and degrees
+    assert geom.extent == (0.0, 5.0, 0.0, 90.0)
+
+    with pytest.raises(ValueError, match="expected"):
+        geometry.as_surface(v[:-1], geom)
+
+
+def test_field_datasets_declare_their_geometry():
+    """A contact set that tiles a surface must never fall back to an index plot."""
+    pytest.importorskip("cvxopt", reason="membrane_2d needs greedy_algos[qp]")
+    for key, kind in (("physics", "grid"), ("membrane_2d", "scatter"), ("hertz_2d", "line")):
+        ds = ds_mod.load(key)
+        assert ds.geometry is not None, key
+        assert ds.geometry.kind == kind, (key, ds.geometry.kind)
+    # hertz_2d is genuinely 1-D but along an arc: it carries a physical abscissa.
+    hz = ds_mod.load("hertz_2d")
+    assert hz.geometry.coords is not None
+    assert len(hz.geometry.coords) == hz.dim
+
+
+def test_reconstruction_renders_fields_for_grid_datasets(tmp_path):
+    """physics figures must be surfaces, not curves against a component index."""
+    from bench import reconstruction
+
+    rc = reconstruction.main([
+        "--datasets", "physics", "--methods", "cpg_bee20", "mcpg_ndee22",
+        "--R", "4", "--split", "--out", str(tmp_path),
+    ])
+    assert rc == 0
+    root = tmp_path / "physics" / "reconstruction"
+    assert (root / "all_methods.png").stat().st_size > 5000
+    for m in ("cpg_bee20", "mcpg_ndee22"):
+        for case in ("best.png", "worst.png"):
+            # A three-panel field triptych is substantially larger than a line plot.
+            assert (root / m / case).stat().st_size > 20000, f"{m}/{case} looks like a curve"
+
+
 def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""
     for key, method in METHODS.items():

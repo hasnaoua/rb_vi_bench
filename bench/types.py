@@ -97,6 +97,12 @@ class Dataset:
     A: np.ndarray | None = None                  # primal stiffness / energy matrix
     B_of_mu: Callable[[int], np.ndarray] | None = None   # index -> B(mu_i)
     mass: np.ndarray | None = None               # Gram matrix of ||.||_Lambda
+    #: How a snapshot lays out in space (see ``bench.geometry``). Only affects how
+    #: snapshots are *drawn*; every metric is basis-independent and ignores it. Absent
+    #: means a 1-D contact set plotted against its component index -- which is wrong for
+    #: any dataset whose contact nodes tile a surface, so it must be set wherever the
+    #: source knows its own geometry.
+    geometry: object | None = None
 
     def __post_init__(self) -> None:
         S = np.asarray(self.snapshots, dtype=float)
