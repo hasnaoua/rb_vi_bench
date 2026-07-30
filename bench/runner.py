@@ -40,7 +40,13 @@ from .types import Dataset
 
 RESULTS = _paths.ROOT / "results"
 
-DEFAULT_DELTAS = (0.5, 0.2, 0.1, 0.05)
+# The tolerance grid has to span two orders of magnitude because the datasets differ
+# enormously in how compressible they are. `gaussian_synth` still needs R = 15 at
+# delta = 0.1, while `fem_lambda` and `physics` are near-rank-1 (s1/s0 = 0.026 and
+# 0.057) and saturate at R = 1 there -- a cone of one generator, on which every
+# conditioning metric is degenerate. Without the tight end of this grid those two
+# datasets contribute no informative row at all.
+DEFAULT_DELTAS = (0.5, 0.2, 0.1, 0.05, 0.02, 0.01)
 DEFAULT_CARDINALITIES = (4, 8, 12, 16)
 
 

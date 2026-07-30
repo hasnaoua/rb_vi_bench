@@ -70,7 +70,12 @@ def gram_conditioning(generators: np.ndarray) -> dict[str, float]:
     conventions share.
     """
     G = np.asarray(generators, float)
-    if G.size == 0 or G.shape[1] == 0:
+    # A one-generator cone has a 1x1 Gram matrix whose condition number is exactly 1.
+    # That is arithmetically true and comparatively meaningless -- placed next to a
+    # 20-generator cone it reads as a perfect score. Datasets that saturate at R = 1
+    # are common here (`fem_lambda` and `physics` are near-rank-1: s1/s0 = 0.026 and
+    # 0.057), so this must be absent rather than flattering.
+    if G.size == 0 or G.shape[1] < 2:
         return {"gram_cond": float("nan"), "gram_cond_raw": float("nan")}
 
     norms = np.linalg.norm(G, axis=0)

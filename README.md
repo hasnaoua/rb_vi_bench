@@ -66,6 +66,13 @@ second implementation family.
 python3 -m venv .venv && .venv/bin/pip install -e repos/greedy_algos pytest
 ```
 
+The two `heavy`-tier 2-D datasets additionally need `cvxopt` (`greedy_algos`' optional
+`[qp]` extra), which they import at module scope:
+
+```bash
+.venv/bin/pip install cvxopt
+```
+
 Run the default grid (fast-tier datasets, all methods, four tolerances and four
 cardinalities), then render it:
 

@@ -16,9 +16,15 @@ membrane_2d    varies   ``B`` fixed geometry         2-D, [NDEE22] §5.1 analogu
 hertz_2d       varies   ``B(mu)`` moving contact     2-D elasticity, [NDEE22] §5.2 analogue
 ============== ======== =========================== ==============================
 
-**Tiers.** ``fast`` sources load or solve in seconds and are the default grid.
-``heavy`` ones run a 2-D FEM solve per parameter and are opt-in, so the default
-benchmark stays runnable. Nothing about the metrics differs between tiers.
+**Tiers.** ``fast`` sources need only numpy/scipy and are the default grid. ``heavy``
+ones are the two 2-D FEM models, and they are opt-in for a dependency reason rather than
+a runtime one: both import ``cvxopt`` at module scope, which is ``greedy_algos``'
+optional ``[qp]`` extra, so the default grid stays runnable on a bare install. Their
+build cost is modest (roughly 30s and 7s respectively). Install with::
+
+    pip install cvxopt        # or: pip install -e repos/greedy_algos[qp]
+
+Nothing about the metrics differs between tiers.
 
 **Provenance, not citation.** ``Dataset.paper`` records which repository a source
 came from. It is *not* a claim that the source reproduces a number in that paper --
@@ -246,7 +252,9 @@ def _membrane_2d() -> Dataset:
     """2-D membrane obstacle problem -- the [NDEE22] §5.1 analogue, in 2-D."""
     from greedy.synthetic_data.contact_forces.membrane_hf import MembraneHF, training_grid
 
-    hf = MembraneHF(n=24)                 # coarser than the default 48: one FEM solve per mu
+    # n=36 rather than the module default 48: 497 contact dofs against 885, for a third
+    # of the build time. The dual dimension is what matters here and 497 is ample.
+    hf = MembraneHF(n=36)
     params = training_grid()
     U, L = [], []
     for mu in params:
@@ -277,8 +285,11 @@ def _hertz_2d() -> Dataset:
     """
     from greedy.synthetic_data.contact_forces.hertz_hf import HertzHF, training_grid
 
-    hf = HertzHF(nr=10, na=32)            # reduced mesh; the full 18x60 is far slower
-    params = training_grid()[::3]         # 27 of 81 parameters
+    # The module's own 18x60 mesh, matching [NDEE22] §5.2's discretization, at 26 dual
+    # dofs. A coarser mesh saves no meaningful time and drops to 14 dofs, too few to
+    # discriminate between cones.
+    hf = HertzHF(nr=18, na=60)
+    params = training_grid()[::2]         # 41 of the 81 paper parameters
     L = []
     for mu in params:
         lam, _x, _gap = hf.solve(mu)
@@ -313,9 +324,9 @@ DATASETS: dict[str, DatasetSpec] = {
         DatasetSpec("physics", "Physics contact forces", _physics, "fast",
                     "7676 dofs; dimension scaling"),
         DatasetSpec("membrane_2d", "2-D membrane", _membrane_2d, "heavy",
-                    "one FEM solve per parameter"),
+                    "497 dual dofs; needs cvxopt"),
         DatasetSpec("hertz_2d", "2-D Hertz contact", _hertz_2d, "heavy",
-                    "2-D elasticity per parameter"),
+                    "moving contact patch; needs cvxopt"),
     )
 }
 

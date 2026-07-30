@@ -348,6 +348,21 @@ def test_registry_is_self_consistent():
             f"{a}/{b} are not a cross-family pair")
 
 
+@pytest.mark.parametrize("key", ds_mod.HEAVY)
+def test_heavy_datasets_load_when_cvxopt_is_present(key):
+    """The 2-D sources are advertised, so they must build -- given their dependency.
+
+    Both import ``cvxopt`` at module scope. Skipping when it is absent keeps the suite
+    green on a bare install, but a *different* failure must still fail the test rather
+    than be swallowed as "optional".
+    """
+    pytest.importorskip("cvxopt", reason="heavy-tier datasets need greedy_algos[qp]")
+    ds = ds_mod.load(key)
+    assert ds.snapshots.min() >= 0.0
+    assert ds.dim > 1 and ds.n_snapshots > 1
+    assert np.all(np.isfinite(ds.snapshots))
+
+
 @pytest.mark.parametrize("key", ds_mod.FAST)
 def test_fast_datasets_load_and_are_valid(key):
     """Every advertised fast dataset must build and satisfy the Dataset contract."""
