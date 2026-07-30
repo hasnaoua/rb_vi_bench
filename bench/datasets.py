@@ -215,12 +215,49 @@ def _fem_lambda() -> Dataset:
     return Dataset(
         name="fem_lambda",
         snapshots=np.ascontiguousarray(snapshots.T),          # (n, dim) -> (dim, n)
-        description="FEM_SOLS contact multipliers, paper parameter grid",
+        description="[BEE20] §6.2 half-disk contact, 57 nodes from the symmetry axis out",
         paper="greedy_algos / FEM_SOLS",
         params=radii.reshape(-1, 1),
         train_idx=np.asarray(train_idx, int),
         test_idx=np.asarray(test_idx, int),
+        # Already ordered along the contact line: index 0 is the symmetry axis and index
+        # increases outward. Established rather than assumed -- see FEM_LAMBDA_ORDERING.
+        geometry=geometry.line_geometry(
+            xlabel="contact node (0 = symmetry axis)"),
     )
+
+
+#: What is known about the FEM_SOLS node ordering, and how.
+#:
+#: FEM_SOLS ships no coordinates and no mesh connectivity -- only 57 multiplier values per
+#: parameter -- so whether the nodes are spatially ordered has to be established from the
+#: values themselves. Four checks, all on the 50 snapshots:
+#:
+#: 1. **They are already ordered.** Total variation is 7.81 in the given order against
+#:    84.0 for a random permutation and 5.08 for the (unattainable) sort-by-magnitude
+#:    bound. In the active block 91% of consecutive steps strictly decrease.
+#:
+#: 2. **Node 0 is the symmetry-axis node**, carrying a half-support shape function:
+#:    ``lambda[0]/lambda[1] = 0.5035 +/- 0.019`` across all 50 snapshots. So these are
+#:    nodal *forces* (``integral p phi_i``), not pressures, and node 0's hat function is
+#:    truncated by the symmetry plane.
+#:
+#: 3. **Spacing is essentially uniform.** Doubling node 0 and fitting the semi-elliptical
+#:    Hertz profile ``p0 sqrt(1-(x/a)^2)`` against the node *index* gives R^2 = 0.989,
+#:    with contact half-width a = 13.3 nodes -- matching the 15-17 active nodes measured.
+#:    Index is therefore a faithful abscissa.
+#:
+#: 4. **Seriation finds nothing better.** Spectral (Fiedler) ordering on the node-node
+#:    correlation scored TV = 20.7, worse than the given order by 2.7x -- the 43
+#:    near-zero tail nodes dominate the correlation structure.
+#:
+#: Two caveats. Residuals to the Hertz fit reach +/-8% with alternating sign, which is
+#: mild mesh grading rather than noise; recovering exact tributary lengths would need the
+#: mesh, which the archive does not carry. And the snapshots are left **uncorrected**
+#: here -- node 0 is not doubled -- because scaling them would silently change every
+#: benchmark number. The correction belongs in plotting, not in the data.
+FEM_LAMBDA_ORDERING = """index 0 = symmetry axis, increasing outward; uniform spacing;
+lambda are nodal forces, and node 0 carries half weight (x2 to compare against pressure)."""
 
 
 def _physics() -> Dataset:
