@@ -1,0 +1,12 @@
+# Verified against numpy 1.26.4 / scipy 1.11.4 on Python 3.12.
+numpy>=1.24
+scipy>=1.10
+
+# Both papers state their authors used cvxopt: [BEE20] §6 ("the reduced-order
+# modeling algorithms have been developed in Python using the convex
+# optimization package cvxopt") and [NDEE22] §5. It is NOT required here:
+#   * the cone projection is an NNLS, solved by scipy.optimize.nnls;
+#   * [NDEE22] Algorithm 2 line 9 and the beta = 0 test are QPs, solved by SLSQP.
+# Install it only if you switch norm_Lambda to the linf choice, where the
+# projection becomes a linear program that nnls cannot express.
+# cvxopt>=1.3
