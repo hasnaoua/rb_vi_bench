@@ -489,6 +489,40 @@ def test_runner_cell_is_complete_when_it_runs(bumps):
         assert key in row, f"missing {key}"
 
 
+def test_figures_render_from_a_grid(tmp_path, bumps):
+    """Figures must build from a grid CSV, and cover the no-split case.
+
+    ``physics`` has no train/test split by design, so its test-error column is all nan;
+    a test-error panel would come out blank and read as missing data rather than as an
+    absent split. The figure module has to fall back to the training error and say so.
+    """
+    import csv
+
+    from bench import figures
+    from bench.runner import _write_csv, run_cell
+
+    rows = []
+    no_split = Dataset(name="nosplit", snapshots=bumps.snapshots)
+    for ds in (bumps, no_split):
+        for R in (2, 4, 6):
+            for m in ("cpg_ndee22", "mcpg_ndee22", "adg", "pod_control"):
+                rows.append(run_cell(ds, m, R=R, with_infsup=False, with_determinism=False))
+    _write_csv(tmp_path / "grid.csv", rows)
+
+    series = figures.load_cardinality_rows(tmp_path / "grid.csv")
+    assert set(series) == {"bumps", "nosplit"}
+    assert figures.error_column(series["bumps"])[0] == "test_max_rel_err"
+    assert figures.error_column(series["nosplit"])[0] == "train_max_rel_err"
+
+    out = tmp_path / "figs"
+    assert figures.main(["--results", str(tmp_path), "--out", str(out)]) == 0
+    written = sorted(p.name for p in out.glob("*.png"))
+    assert "overview_precision.png" in written
+    assert any(n.startswith("cardinality_") for n in written)
+    for p in out.glob("*.png"):
+        assert p.stat().st_size > 5000, f"{p.name} looks empty"
+
+
 def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""
     for key, method in METHODS.items():

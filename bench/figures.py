@@ -1,0 +1,243 @@
+"""Metric-vs-cardinality figures from a benchmark grid.
+
+Plots the **matched-cardinality** rows only, and that restriction is the whole point.
+In tolerance mode each method reaches its own ``R``, and ``R`` is the *output*; worse,
+the tolerances are not commensurable across methods -- ADG's ``epsilon`` is a
+per-snapshot relative bound on ``S_norm`` while CPG/mCPG use one shared absolute
+threshold ``epsilon * max_q ||theta_q||``. Putting those on a shared x-axis would draw a
+comparison that does not exist. At matched cardinality every method is handed the same
+``R`` and no stopping rule applies, so the curves are directly comparable.
+
+Four panels per dataset, one line per method:
+
+* **precision** -- test (solid) and train (dashed) max relative projection error.
+* **conditioning** -- Gram condition number, log scale. Undefined below R=2.
+* **orthogonality** -- ``e_orth`` ([NDEE22] Eq. 41), bounded by 1; higher is a wider cone.
+* **offline cost** -- total constrained-solver calls, log scale. Machine-independent,
+  unlike wall-clock.
+
+POD is drawn dashed and grey throughout: it is a negative control, not a competitor, and
+its curve is an unattainable floor rather than a result (see the README).
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+from collections import defaultdict
+from pathlib import Path
+
+from . import _paths  # noqa: F401  -- forces the Agg backend before pyplot is imported
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+RESULTS = _paths.ROOT / "results"
+
+# Stable per-method styling, so a method keeps its colour across every figure.
+# Families share a hue: CPG blues, mCPG greens, ADG oranges, baselines grey/red.
+STYLE: dict[str, dict] = {
+    "cpg_bee20":   dict(color="#1f4e9c", marker="o", ls="-",  label="CPG [BEE20]"),
+    "cpg_ndee22":  dict(color="#3a7bd5", marker="s", ls="-",  label="CPG [NDEE22]"),
+    "cpg_greedy":  dict(color="#7fb2f0", marker="^", ls="--", label="CPG (greedy.core)"),
+    "mcpg_ndee22": dict(color="#1b7f4f", marker="o", ls="-",  label="mCPG [NDEE22]"),
+    "mcpg_greedy": dict(color="#5cc98d", marker="^", ls="--", label="mCPG (greedy.core)"),
+    "adg":         dict(color="#e8760a", marker="D", ls="-",  label="ADG (batch normalized)"),
+    "adg_raw":     dict(color="#f0b27a", marker="d", ls=":",  label="ADG (un-normalized)"),
+    "nmf_s0":      dict(color="#c0392b", marker="v", ls="-",  label="NMF (seed 0)"),
+    "nmf_s1":      dict(color="#d98880", marker="v", ls=":",  label="NMF (seed 1)"),
+    "nmf_s2":      dict(color="#e6b0aa", marker="v", ls=":",  label="NMF (seed 2)"),
+    "pod_control": dict(color="#7f8c8d", marker="x", ls="--", label="POD (control)"),
+}
+
+PANELS = (
+    ("test_max_rel_err", "max relative projection error", "log", "precision (test set)"),
+    ("gram_cond",        "Gram condition number",         "log", "conditioning"),
+    ("e_orth_mean",      "mean $e_{orth}$",               "linear", "orthogonality (Eq. 41)"),
+    ("calls_total",      "constrained solver calls",      "log", "offline cost"),
+)
+
+
+def error_column(series) -> tuple[str, str]:
+    """Pick the error column a dataset can actually support.
+
+    ``physics`` has **no train/test split** -- ``greedy_algos``' physics pipeline builds
+    and evaluates on the whole dataset deliberately -- so its ``test_max_rel_err`` is
+    ``nan`` throughout and a test-error panel comes out blank. Fall back to the training
+    error and say so in the title, rather than shipping an empty axes that reads like
+    missing data.
+    """
+    for _R, row in [p for pts in series.values() for p in pts]:
+        if not math.isnan(_num(row, "test_max_rel_err")):
+            return "test_max_rel_err", "precision (test set)"
+    return "train_max_rel_err", "precision (train set — no split)"
+
+
+def _num(row: dict, key: str) -> float:
+    raw = row.get(key, "")
+    if raw in ("", None):
+        return float("nan")
+    try:
+        return float(raw)
+    except ValueError:
+        return float("nan")
+
+
+def load_cardinality_rows(path: Path) -> dict[str, dict[str, list[tuple[float, dict]]]]:
+    """``{dataset: {method: [(R, row), ...]}}`` from the matched-cardinality cells."""
+    with path.open() as fh:
+        rows = list(csv.DictReader(fh))
+    out: dict[str, dict[str, list[tuple[float, dict]]]] = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        if r.get("mode") != "cardinality" or r.get("skip_reason"):
+            continue
+        R = _num(r, "R")
+        if math.isnan(R) or R <= 0:
+            continue
+        out[r["dataset"]][r["method"]].append((R, r))
+    for ds in out:
+        for m in out[ds]:
+            # Several requested R can collapse to the same achieved R (a method may cap
+            # at n_train); keep the first and sort so the lines are monotone in x.
+            seen: dict[float, dict] = {}
+            # Sort on R alone: two rows can share an achieved R (a method caps at
+            # n_train, so several requested R collapse), and tuple ordering would then
+            # fall through to comparing the row dicts.
+            for R, row in sorted(out[ds][m], key=lambda pair: pair[0]):
+                seen.setdefault(R, row)
+            out[ds][m] = sorted(seen.items())
+    return out
+
+
+def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False):
+    plotted = 0
+    primary: list[float] = []
+    for method, points in series.items():
+        style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
+        xs = [R for R, _ in points]
+        ys = [_num(row, column) for _, row in points]
+        good = [(x, y) for x, y in zip(xs, ys) if not math.isnan(y) and (yscale != "log" or y > 0)]
+        if not good:
+            continue
+        ax.plot([g[0] for g in good], [g[1] for g in good],
+                color=style["color"], marker=style["marker"], ls=style["ls"],
+                label=style["label"], ms=4, lw=1.4, alpha=0.9)
+        # POD is deliberately excluded from the y-range: it is a negative control whose
+        # error falls to machine zero once R reaches the numerical rank, and letting that
+        # set the scale compresses every curve actually being compared into a thin band.
+        # It stays plotted, and clips off the bottom where it dives.
+        if method != "pod_control":
+            primary.extend(g[1] for g in good)
+        plotted += 1
+        if dashed_train:
+            yt = [_num(row, "train_max_rel_err") for _, row in points]
+            gt = [(x, y) for x, y in zip(xs, yt) if not math.isnan(y) and y > 0]
+            if gt:
+                ax.plot([g[0] for g in gt], [g[1] for g in gt],
+                        color=style["color"], ls=":", lw=0.9, alpha=0.45)
+    ax.set_yscale(yscale)
+    # Scale to the primary (test) series. The train overlay reaches machine zero as soon
+    # as the cone contains every training snapshot, and on a log axis that single
+    # excursion to 1e-16 squeezes every curve worth comparing into a band at the top.
+    # Train lines simply clip below the floor.
+    if primary and yscale == "log":
+        lo, hi = min(primary), max(primary)
+        if lo > 0:
+            ax.set_ylim(lo / 3.0, hi * 3.0)
+    ax.set_xlabel("cardinality $R$")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontsize=10)
+    ax.grid(alpha=0.25, lw=0.5)
+    return plotted
+
+
+def figure_for_dataset(dataset: str, series, out_dir: Path) -> Path:
+    err_col, err_title = error_column(series)
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.0))
+    for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), PANELS):
+        if column == "test_max_rel_err":
+            column, title = err_col, err_title
+        _panel(ax, series, column, ylabel, yscale, title,
+               dashed_train=(column == "test_max_rel_err"))
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=8, frameon=False,
+               bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(f"{dataset} — metrics vs cardinality (matched-R mode)", fontsize=12)
+    fig.text(0.5, 0.945,
+             "dotted = train error;  POD is a negative control (unattainable floor)",
+             ha="center", fontsize=8, color="#555555")
+    fig.tight_layout(rect=(0, 0.04, 1, 0.93))
+
+    safe = dataset.replace("[", "_").replace("]", "").replace("<", "").replace("=", "")
+    path = out_dir / f"cardinality_{safe}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def figure_precision_overview(all_series, out_dir: Path) -> Path:
+    """One precision panel per dataset -- the cross-dataset summary."""
+    names = sorted(all_series)
+    ncol = 4
+    nrow = math.ceil(len(names) / ncol)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.0 * ncol, 3.2 * nrow), squeeze=False)
+    for ax, name in zip(axes.ravel(), names):
+        col, _title = error_column(all_series[name])
+        suffix = "" if col == "test_max_rel_err" else "  (train — no split)"
+        _panel(ax, all_series[name], col, "max rel. error", "log", name + suffix)
+    for ax in axes.ravel()[len(names):]:
+        ax.axis("off")
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=6, fontsize=8, frameon=False,
+               bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle("Precision vs cardinality, all datasets (matched-R mode)", fontsize=13)
+    fig.tight_layout(rect=(0, 0.05, 1, 0.96))
+    path = out_dir / "overview_precision.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="metric-vs-cardinality figures")
+    p.add_argument("--results", type=Path, default=RESULTS,
+                   help="directory holding grid.csv")
+    p.add_argument("--out", type=Path, default=None,
+                   help="where to write PNGs (default: <results>/figures)")
+    args = p.parse_args(argv)
+
+    grid = args.results / "grid.csv"
+    if not grid.is_file():
+        raise SystemExit(f"{grid} not found; run `python -m bench.runner` first")
+
+    out_dir = args.out or (args.results / "figures")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    all_series = load_cardinality_rows(grid)
+    if not all_series:
+        raise SystemExit(
+            f"{grid} has no matched-cardinality rows. Figures are drawn from that mode "
+            "only -- tolerance-mode R is an output, and the tolerances are not "
+            "commensurable across methods. Re-run with --cardinalities."
+        )
+
+    written = []
+    for dataset in sorted(all_series):
+        written.append(figure_for_dataset(dataset, all_series[dataset], out_dir))
+    written.append(figure_precision_overview(all_series, out_dir))
+
+    n_pts = {d: max((len(v) for v in s.values()), default=0) for d, s in all_series.items()}
+    thin = [d for d, n in n_pts.items() if n < 4]
+    for path in written:
+        print(path)
+    if thin:
+        print(f"\nnote: only {min(n_pts.values())} cardinality points for {', '.join(thin)}; "
+              "pass more --cardinalities for smoother curves")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
