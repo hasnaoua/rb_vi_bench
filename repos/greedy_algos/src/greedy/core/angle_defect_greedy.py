@@ -360,11 +360,28 @@ class AngularDefectGreedy(ConeGreedy):
             )
 
             accepted_count = 0
+            # S_norm is a SET: snapshots on the same positive ray collapse to one
+            # element, so card(S_norm) <= N. That matters exactly here. A batch admits
+            # EVERY snapshot attaining theta_max, and coincident rays necessarily tie --
+            # so without this guard a k-fold repeated direction would enter the cone as
+            # k separate generators. They add nothing to span_+, inflate n*, and make
+            # the Gram matrix singular. Duplicates of an ALREADY-stored generator cannot
+            # reach here (they project exactly, so their residual is 0 and they are not
+            # eligible); only within-batch repeats need catching.
+            accepted_units: list[np.ndarray] = []
             for candidate in candidates:
                 candidate_residual = float(residuals[candidate])
                 candidate_angle = float(angles[candidate])
                 if candidate_residual <= self.stopping_tolerance:
                     continue
+
+                row = self._fit_snapshots[candidate]
+                row_norm = float(np.linalg.norm(row))
+                if row_norm > self.zero_tol:
+                    unit = row / row_norm
+                    if any(float(unit @ other) > 1.0 - 1e-12 for other in accepted_units):
+                        continue
+                    accepted_units.append(unit)
 
                 self._basis.append(self.snapshots[candidate].copy())
                 self.selected_indices.append(candidate)

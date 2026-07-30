@@ -185,6 +185,109 @@ def test_e_orth_respects_its_bound(bumps):
 
 
 # ---------------------------------------------------------------------------
+# Batch Normalized Angular-Defect Greedy -- the spec's own invariants
+# ---------------------------------------------------------------------------
+
+def test_adg_default_is_the_normalized_form(bumps):
+    """The algorithm is defined on S_norm, so the registered `adg` must use it.
+
+    The un-normalized variant is a different algorithm: its stopping rule is one
+    absolute threshold `epsilon * max_q ||x_q||` shared by every snapshot, and its
+    selection argmax is no longer equivalent to the spec's, because `e_K = sin(theta_K)`
+    only holds on unit vectors.
+    """
+    result = METHODS["adg"].fit(bumps, delta=0.2)
+    assert "normalize_snapshots=True" in result.notes
+    raw = METHODS["adg_raw"].fit(bumps, delta=0.2)
+    assert "normalize_snapshots=False" in raw.notes
+
+
+def test_adg_terminates_at_the_requested_tolerance(bumps):
+    """Output guarantee: r_p* = max_{v in S_norm} e_K(v) <= epsilon.
+
+    On S_norm the error is measured per snapshot against its own unit norm, so this is
+    a genuine per-snapshot bound -- unlike a shared absolute threshold, under which a
+    small-magnitude snapshot can stay badly represented while the max looks fine.
+    """
+    from bench.metrics.precision import projection_errors
+
+    S = bumps.train()
+    S_norm = S / np.linalg.norm(S, axis=0)
+    for eps in (0.5, 0.2, 0.05):
+        result = METHODS["adg"].fit(bumps, delta=eps)
+        worst = projection_errors(S_norm, result.generators).max()
+        assert worst <= eps + 1e-9, (
+            f"epsilon={eps}: r_p* = {worst:.4e} exceeds the tolerance")
+
+
+def test_adg_initializes_with_the_widest_angle_pair(bumps):
+    """W_0 is the pair realizing argmax_{i<j} sin(theta(x_i, x_j)).
+
+    For non-negative snapshots every pairwise angle lies in [0, pi/2], where sine is
+    increasing, so the widest angle is the smallest cosine.
+    """
+    from greedy.core.angle_defect_greedy import AngularDefectGreedy
+
+    rows = np.ascontiguousarray(bumps.train().T)
+    model = AngularDefectGreedy(snapshots=rows, epsilon=0.2, normalize_snapshots=True)
+    model.compute_phases()
+
+    U = rows / np.linalg.norm(rows, axis=1)[:, None]
+    C = U @ U.T
+    np.fill_diagonal(C, np.inf)
+    i, j = np.unravel_index(int(np.argmin(C)), C.shape)
+    assert set(model.initial_pair) == {int(i), int(j)}
+    assert model.selected_indices[:2] == list(model.initial_pair)
+
+
+def test_adg_admits_the_whole_tied_batch(bumps):
+    """Each round adds EVERY snapshot attaining theta_max, not just one.
+
+    That is what makes it a batch method, and what the Theorem 3.5 certificate rests on.
+    """
+    from greedy.core.angle_defect_greedy import AngularDefectGreedy
+
+    rows = np.ascontiguousarray(bumps.train().T)
+    model = AngularDefectGreedy(snapshots=rows, epsilon=0.05, normalize_snapshots=True)
+    model.compute_phases()
+    assert model.batch_size_history, "no enrichment round ran"
+    # 2 from the initial pair, plus one batch per round.
+    assert len(model.selected_indices) == 2 + sum(model.batch_size_history)
+    cert = model.verify_angular_defect_certificate()
+    assert cert["checked"] > 0
+    assert cert["violations"] == 0, (
+        f"Theorem 3.5 violated in rounds {cert['violation_rounds']} "
+        f"(max slack {cert['max_violation']:.3e})")
+
+
+def test_adg_collapses_coincident_rays():
+    """S_norm is a SET: snapshots on one positive ray contribute a single generator.
+
+    This binds precisely because the method is batched. Coincident rays necessarily tie
+    at theta_max, so without the set semantics a k-fold repeated direction would enter
+    the cone as k generators that add nothing to span_+, inflating n* and making the
+    Gram matrix singular.
+    """
+    from greedy.core.angle_defect_greedy import AngularDefectGreedy
+
+    base = _bumps(dim=24, n=6, seed=3).snapshots          # (dim, n)
+    # Three copies of one direction at different magnitudes: one ray, one generator.
+    ray = base[:, 0]
+    cols = [ray, 2.0 * ray, 7.5 * ray] + [base[:, k] for k in range(1, 6)]
+    rows = np.ascontiguousarray(np.column_stack(cols).T)
+
+    model = AngularDefectGreedy(snapshots=rows, epsilon=1e-3, normalize_snapshots=True)
+    model.compute_phases()
+
+    G = np.asarray(model.basis_matrix, float).T           # -> (dim, R)
+    U = G / np.linalg.norm(G, axis=0)
+    C = np.abs(U.T @ U)
+    np.fill_diagonal(C, 0.0)
+    assert C.max() < 1.0 - 1e-9, (
+        f"cone contains duplicate rays (max off-diagonal cosine {C.max():.12f})")
+
+
+# ---------------------------------------------------------------------------
 # Determinism, instrumentation, agreement
 # ---------------------------------------------------------------------------
 

@@ -141,22 +141,32 @@ def fit_greedy_mcpg(dataset, *, delta=None, R=None) -> BasisResult:
     )
 
 
-def fit_greedy_adg(dataset, *, delta=None, R=None, normalize_snapshots=False) -> BasisResult:
-    """Angular Defect Greedy -- in neither paper; ``greedy_algos``' own method.
+def fit_greedy_adg(dataset, *, delta=None, R=None, normalize_snapshots=True) -> BasisResult:
+    """Batch Normalized Angular-Defect Greedy -- in neither paper; ``greedy_algos``' own.
 
     Selects on the *angle* between a candidate and its cone projection rather than on
-    residual magnitude. It has no family-A counterpart, so it is excluded from
-    cross-implementation agreement and appears only in the precision, stability and
-    performance grids.
+    residual magnitude, and admits every snapshot attaining ``theta_max`` in one batch.
+    It has no family-A counterpart, so it is excluded from cross-implementation
+    agreement and appears only in the precision, stability and performance grids.
 
-    ``normalize_snapshots`` changes what the stopping tolerance means: with it on, the
-    scale is measured on unit-norm snapshots, turning the criterion into a genuine
-    per-snapshot relative check instead of one absolute threshold shared across all
-    snapshots. It is off by default here so ADG's tolerance is comparable to
-    CPG's/mCPG's; the normalized variant is registered as a separate method, because
-    comparing the two at a nominally equal ``delta`` would otherwise be misleading.
+    **The algorithm is defined on the normalized snapshot set** ``S_norm = {x/||x||}``,
+    which is why ``normalize_snapshots`` defaults to True here. Two things depend on it:
+
+    * The stopping scale becomes 1, so the tolerance is exactly the spec's
+      ``epsilon in (0,1)`` -- a genuine per-snapshot relative check, rather than one
+      absolute threshold ``epsilon * max_q ||x_q||`` that a single large-magnitude
+      snapshot would set for everything else.
+    * More fundamentally, the selection step is only well posed on ``S_norm``. The
+      spec takes ``J_p`` to be the argmax over *all* unselected snapshots, while the
+      implementation searches the *unresolved* ones; those agree because on unit
+      snapshots ``e_K(x) = sin(theta_K(x))``, so projection error and angular defect
+      induce the same ordering. Un-normalized, that equivalence fails and the two
+      argmaxes can differ.
+
+    Running it un-normalized (``adg_raw``) is therefore a deliberately non-standard
+    variant, kept only to show what the shared-threshold stopping rule costs.
     """
-    label = "adg_norm" if normalize_snapshots else "adg"
+    label = "adg" if normalize_snapshots else "adg_raw"
     if R is not None:
         generators, selected, seconds, counts = _fit_to_cardinality(
             fit_angle_fixed_components,
@@ -191,5 +201,6 @@ def fit_greedy_adg(dataset, *, delta=None, R=None, normalize_snapshots=False) ->
     )
 
 
-def fit_greedy_adg_normalized(dataset, *, delta=None, R=None) -> BasisResult:
-    return fit_greedy_adg(dataset, delta=delta, R=R, normalize_snapshots=True)
+def fit_greedy_adg_raw(dataset, *, delta=None, R=None) -> BasisResult:
+    """ADG on un-normalized snapshots -- non-standard; see ``fit_greedy_adg``."""
+    return fit_greedy_adg(dataset, delta=delta, R=R, normalize_snapshots=False)
