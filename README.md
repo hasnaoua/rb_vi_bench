@@ -176,6 +176,50 @@ quoting anything.
 `Dataset.paper` records **provenance**, not a citation — it says which repository a
 source came from, not that it reproduces that paper.
 
+## What the first full run found
+
+8 datasets × 11 methods × (6 tolerances + 4 cardinalities) = 880 cells, 688 run,
+144 agreement comparisons, ~25 min. Regenerate with the commands above.
+
+**CPG is implementation-independent; mCPG is not.** Across all 144 comparisons:
+
+| pair | verdict | n |
+|---|---|---|
+| `cpg_bee20` vs `cpg_greedy` | equivalent | 48/48 |
+| `cpg_ndee22` vs `cpg_greedy` | equivalent | 48/48 |
+| `mcpg_ndee22` vs `mcpg_greedy` | equivalent / within solver tol | 17 |
+| | different cone, same accuracy | 28 |
+| | genuinely divergent | 3 |
+
+Both CPG transcriptions are **bit-identical** to the independent `greedy.core`
+implementation at every tolerance on every dataset. mCPG's two implementations
+progressively diverge as `R` grows — `5.7e-12` at `R=3` up to `2.2e-1` at `R=135` — but
+**achieve the same accuracy**, matching to 3–5 significant figures.
+
+The reason is structural. mCPG's generators are *residuals built on earlier generators*,
+so a difference in the [UNSPECIFIED] line-9 solve at step `r` propagates into every later
+generator and compounds with `R`. CPG has no such accumulation: each generator is an
+independently selected snapshot. So mCPG's cone is **non-unique** given the solver
+choice, and neither implementation is wrong. Only 3 of 48 comparisons — all at the two
+tightest tolerances, where `R` is largest — show a real accuracy difference, the worst
+being `fem_lambda` at `delta=0.01` (test error 0.056 vs 0.046).
+
+**`[NDEE22]` claims C5/C6 reproduce** on every dataset where `R > 1`: mCPG's Gram
+condition number is lower (by up to 87× on `toy_bee20`) and its `e_orth` is higher.
+
+**The two CPG transcriptions cost 3× different for a bit-identical answer.** On
+`toy_bee20` (`n=30`, `R=20`) `cone_projected_greedy` issues 1170 NNLS solves against
+`cpg`'s 390. Two compounding causes, and the closed forms match the measurements
+exactly:
+
+* `[BEE20]` Alg. 2 sweeps **all** `n` snapshots **twice** per iteration — once for the
+  line-5 argmax, once for the line-8 `r_n` update: `2nR = 1200`.
+* `[NDEE22]` Rmk 4.3 sweeps only the **unselected** ones, **once**:
+  `sum_r (n-r) = 390`.
+
+This is a property of how each paper states the algorithm, not of either
+implementation, and it is invisible in wall-clock at this problem size.
+
 ## Two known findings that predate this benchmark
 
 Both are documented in the source repositories and both reproduce here:

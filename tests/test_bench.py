@@ -287,6 +287,24 @@ def test_geometric_divergence_is_separated_from_accuracy_loss(bumps):
             "mCPG implementations differ in achieved accuracy, not just in cone shape")
 
 
+def test_two_exact_cones_report_no_accuracy_gap(bumps):
+    """Two cones that both reproduce the training set exactly must show a zero gap.
+
+    At R = n_train the cone contains every training snapshot, so both errors sit at the
+    NNLS solver's own accuracy -- 2.5e-7 against 6.8e-9 was observed on membrane_2d,
+    both far past exact but a factor of 37 apart. A relative comparison of those reports
+    a 97% gap, which would label a genuine agreement a divergence.
+    """
+    n = bumps.train().shape[1]
+    a = METHODS["mcpg_ndee22"].fit(bumps, R=n)
+    b = METHODS["mcpg_greedy"].fit(bumps, R=n)
+    row = metrics.agreement.compare(a, b, dataset=bumps)
+    assert row["train_err_a"] < metrics.agreement.ACCURACY_FLOOR
+    assert row["train_err_b"] < metrics.agreement.ACCURACY_FLOOR
+    assert row["train_err_gap"] == 0.0, (
+        "two exact cones reported an accuracy gap; the floor is below NNLS accuracy")
+
+
 def test_accuracy_gap_is_absent_without_a_dataset(bumps):
     """``compare`` must stay usable standalone, and must not fake an accuracy verdict."""
     a = METHODS["cpg_ndee22"].fit(bumps, R=6)

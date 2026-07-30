@@ -70,6 +70,18 @@ SOLVER_ATOL = 1e-5
 # would matter when choosing between them.
 ACCURACY_RTOL = 1e-2
 
+# Errors below this (already normalized by the snapshot scale) count as exact, and the
+# relative gap between two of them is not computed.
+#
+# Set against what the benchmark actually asks for, not against machine epsilon. The
+# tightest tolerance in the grid is 1e-2, so a cone reproducing its snapshots to 1e-6 is
+# four orders better than anything requested -- the residual there is NNLS's own
+# accuracy, not a property of the cone. Without this floor, two implementations that
+# both reproduce the training set exactly (2.5e-7 against 6.8e-9 on membrane_2d, both
+# far past exact, but a factor of 37 apart) report a 97% relative gap, and a genuine
+# agreement is labelled a divergence.
+ACCURACY_FLOOR = 1e-6
+
 
 def cones_agree_as_sets(Ga: np.ndarray, Gb: np.ndarray, *,
                         n_probes: int = 12, seed: int = 0,
@@ -121,7 +133,11 @@ def accuracy_gap(dataset, a: BasisResult, b: BasisResult) -> dict[str, float]:
         eb = float(projection_errors(cols, b.generators).max() / scale)
         out[f"{label}_err_a"] = ea
         out[f"{label}_err_b"] = eb
-        out[f"{label}_err_gap"] = abs(ea - eb) / max(ea, eb, 1e-300)
+        # Both exact => no gap. Comparing two zeros relatively is meaningless.
+        out[f"{label}_err_gap"] = (
+            0.0 if max(ea, eb) <= ACCURACY_FLOOR
+            else abs(ea - eb) / max(ea, eb)
+        )
     gaps = [v for k, v in out.items() if k.endswith("_err_gap")]
     if gaps:
         out["max_err_gap"] = max(gaps)
