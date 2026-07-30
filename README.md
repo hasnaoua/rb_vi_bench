@@ -49,7 +49,7 @@ PDF with a shifted Type-1 font encoding and read by eye. Neither applies to `[ND
 | `mcpg` | `rb_vi_common` | `[NDEE22]` Alg. 2: cone-constrained residual generators |
 | `greedy.core.CPG` | `greedy.core` | independent implementation, relative tolerance |
 | `greedy.core.mCPG` | `greedy.core` | independent implementation |
-| `greedy.core.AngularDefectGreedy` | `greedy.core` | **ADG** — in neither paper |
+| `greedy.core.AngularDefectGreedy` | `greedy.core` | **ADG** — Batch Normalized Angular-Defect Greedy, in neither paper |
 
 Collapsing these would mean silently attributing one paper's conventions to the other.
 Both source repositories argue this explicitly in their `REPRODUCTION_NOTES.md`, and the
@@ -206,6 +206,22 @@ being `fem_lambda` at `delta=0.01` (test error 0.056 vs 0.046).
 
 **`[NDEE22]` claims C5/C6 reproduce** on every dataset where `R > 1`: mCPG's Gram
 condition number is lower (by up to 87× on `toy_bee20`) and its `e_orth` is higher.
+
+**ADG's tolerance is a stronger guarantee than CPG's, so `R` at equal `ε` is not a fair
+comparison.** ADG stops when *every* snapshot in `S_norm` satisfies
+`e_K(x̂) = sin θ_K(x̂) ≤ ε` — a per-snapshot relative bound. CPG and mCPG stop on one
+shared absolute threshold `ε·max_q‖θ_q‖`, under which a small-magnitude snapshot can be
+declared resolved because a large one set the bar. ADG therefore needs more generators
+at the same nominal `ε` (71 vs 52 on `hertz_pressure` at `ε=0.1`) and delivers a
+correspondingly better error (0.37959 vs 0.61521 at `ε=0.5`). Read the two modes
+together, or compare at matched cardinality.
+
+At **matched cardinality**, where the stopping rules do not apply, ADG leads the cone
+methods at low `R` on several datasets — `gaussian_synth` `R=4` (0.2152 vs CPG 0.2574),
+`hertz_pressure` `R=16` (0.4435 vs 0.5218), `membrane_2d` `R=4` (0.7575 vs 0.8032) —
+while mCPG tends to lead at higher `R`. `adg` and `adg_raw` coincide exactly in this
+mode, which is the expected consistency check: normalization changes the stopping rule
+only, never selection.
 
 **The two CPG transcriptions cost 3× different for a bit-identical answer.** On
 `toy_bee20` (`n=30`, `R=20`) `cone_projected_greedy` issues 1170 NNLS solves against
