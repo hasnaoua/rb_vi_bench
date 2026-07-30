@@ -147,6 +147,46 @@ class mCPG(ConeGreedy):
             return None
         return candidate
 
+    def _clamp_shift(self, shift: np.ndarray) -> np.ndarray:
+        """
+        Force theta_qr - Upsilon_r back into W^+ before it is normalized.
+
+        ``solve_cone_shift_projection`` imposes the membership
+        Upsilon in theta_qr - W^+ as ``cone_system @ c <= cone_vector +
+        upper_bound_tol``. That slack is ABSOLUTE, so the shift may dip to
+        -upper_bound_tol. Line 10 then divides by ``shift_norm``, which turns
+        the dip into a relative violation of
+
+            upper_bound_tol / ||theta_qr - Upsilon_r||
+
+        -- unbounded as the shift norm shrinks, which is exactly what happens as
+        the cone saturates and residuals get small. Measured on the Hertz
+        contact dataset the generators reached -6.4e-08 at epsilon=1e-2, and on
+        tightly clustered snapshots (shift norms ~4e-4) they reached -2.4e-06,
+        past this package's own >= -1e-6 assertion.
+
+        That breaks the invariant the algorithm exists to maintain: the paper's
+        Section 4 rejects Gram-Schmidt precisely because it "would lead to a
+        departure from the positive cone W^+", and nu_r <0 is such a departure.
+
+        Clamping costs an O(upper_bound_tol) perturbation of Upsilon_r, which
+        may push it marginally outside K_{r-1}. That is the right trade:
+        Upsilon_r is discarded immediately, whereas nu_r is appended to the cone
+        and every downstream projection, non-negativity check and reduced
+        multiplier inherits its sign.
+        """
+        if self.constraint_transform is None:
+            return np.maximum(shift, 0.0)
+        # With a transform T, "inside W^+" is elementwise in PHYSICAL
+        # coordinates, and physical shift = T @ working shift (both theta and
+        # A c are mapped by the same T). Clamp there, then map back; T is
+        # inv(U) from a Cholesky factor, hence square and invertible.
+        physical = self.constraint_transform @ shift
+        clamped = np.maximum(physical, 0.0)
+        if np.array_equal(clamped, physical):
+            return shift
+        return np.linalg.solve(self.constraint_transform, clamped)
+
     def _grow_by_one(self, candidate: int) -> bool:
         """
         Add the generator built from ``candidate`` (lines 9-11 of Algo. 2):
@@ -179,7 +219,7 @@ class mCPG(ConeGreedy):
             cone_vector=cone_vector,
         )
         upsilon = A @ coeffs
-        shift = theta - upsilon
+        shift = self._clamp_shift(theta - upsilon)
         shift_norm = float(np.linalg.norm(shift))
         if shift_norm <= self.zero_tol:
             # See Remark 4.2: this can only happen if theta_qr was already in

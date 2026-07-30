@@ -39,7 +39,12 @@ def test_mcpg_basis_is_nonnegative_and_converges():
 
     assert model.basis_matrix is not None
     assert model.basis_matrix.shape[0] > 0
-    assert np.all(model.basis_matrix >= -1e-6)
+    # Exact, not -1e-6. nu_r = (theta_qr - Upsilon_r)/||.|| with
+    # Upsilon_r in theta_qr - W^+, so nu_r >= 0 identically; mCPG._clamp_shift
+    # enforces it. A loose bound here hid a real leak of size
+    # upper_bound_tol/||shift||, which is unbounded as the shift norm shrinks --
+    # see test_mcpg_basis_nonnegative_when_shift_norms_are_tiny.
+    assert np.all(model.basis_matrix >= 0.0)
 
     # Residual history must be (non-strictly) decreasing, like CPG/ADG.
     residuals = np.asarray(model.residual_history)
@@ -52,6 +57,67 @@ def test_mcpg_basis_is_nonnegative_and_converges():
     for vector in model.basis_matrix:
         projected = model.project(vector)
         assert np.linalg.norm(projected - vector) < 1e-4 * max(1.0, np.linalg.norm(vector))
+
+
+def test_mcpg_basis_nonnegative_when_shift_norms_are_tiny():
+    """
+    Regression: the cone-shift slack is absolute, the normalization is not.
+
+    ``solve_cone_shift_projection`` allows theta_qr - Upsilon_r >= -upper_tol,
+    and line 10 of Algorithm 2 divides by ||theta_qr - Upsilon_r||. The relative
+    violation is therefore upper_tol/||shift||, which grows without bound as the
+    shift norm shrinks -- so a fixed tolerance on the generators cannot bound it.
+
+    Snapshots clustered tightly around a few directions drive the shift norms to
+    ~1e-4 within a handful of iterations. Before ``_clamp_shift`` this produced
+    generators at -2.4e-06, past the -1e-6 that the other test used to allow.
+    """
+    rng = np.random.default_rng(3)
+    base = np.abs(rng.random((3, 50))) + 0.5
+    snapshots = np.array(
+        [base[i % 3] + 1e-4 * np.abs(rng.random(50)) for i in range(40)]
+    )
+
+    model = mCPG(snapshots=snapshots, epsilon=1e-10)
+    model.compute_phases()
+
+    assert model.basis_matrix.shape[0] > 3, "cone should saturate past the 3 bases"
+    assert min(model.shift_norm_history) < 1e-2, (
+        "this dataset is only a regression test if the shift norms get small; "
+        f"min was {min(model.shift_norm_history):.3e}"
+    )
+    assert model.basis_matrix.min() >= 0.0, (
+        f"generators leaked negative: min = {model.basis_matrix.min():.3e}"
+    )
+
+
+def test_mcpg_basis_nonnegative_with_constraint_transform():
+    """The clamp must act in PHYSICAL coordinates when a transform is given.
+
+    W-norm mCPG runs on U-transformed snapshots, where elementwise
+    non-negativity is meaningless; ``constraint_transform=inv(U)`` maps the
+    membership test back. The clamp has to follow it there, or it would enforce
+    the wrong sign condition.
+    """
+    rng = np.random.default_rng(5)
+    d = 12
+    snapshots = np.abs(rng.random((25, d))) + 0.1
+    gram = np.eye(d) + 0.3 * np.abs(rng.random((d, d)))
+    gram = gram @ gram.T
+    U = np.linalg.cholesky(gram).T
+    transformed = snapshots @ U.T
+
+    model = mCPG(
+        snapshots=transformed,
+        epsilon=1e-8,
+        constraint_transform=np.linalg.inv(U),
+    )
+    model.compute_phases()
+
+    physical = model.basis_matrix @ np.linalg.inv(U).T
+    assert physical.min() >= -1e-12, (
+        f"physical generators leaked negative: min = {physical.min():.3e}"
+    )
 
 
 def test_mcpg_matches_cpg_accuracy_with_better_conditioning():
