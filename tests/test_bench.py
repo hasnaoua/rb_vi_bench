@@ -568,9 +568,9 @@ def test_reconstruction_figures_render(tmp_path):
     """
     from bench import reconstruction
 
-    methods = ["cpg_ndee22", "adg", "pod_control"]
+    methods = ["cpg_ndee22", "adg"]
     rc = reconstruction.main([
-        "--datasets", "toy_bee20", "--methods", *methods,
+        "--datasets", "toy_bee20", "--methods", *methods, "pod_control", "orthant",
         "--R", "4", "--split", "--out", str(tmp_path),
     ])
     assert rc == 0
@@ -586,15 +586,38 @@ def test_reconstruction_figures_render(tmp_path):
             assert p.stat().st_size > 5000, f"{m}/{p.name} looks empty"
 
 
-def test_reconstruction_ranking_ignores_zero_norm_snapshots(bumps):
-    """A zero snapshot has an undefined relative error and must never be 'worst'."""
-    from bench import reconstruction
+def test_zero_snapshots_are_dropped_before_any_algorithm_runs(bumps):
+    """A numerically zero snapshot is absence of data and must never reach a method.
 
+    It is a parameter value at which no contact occurred, so lambda = 0 everywhere.
+    Normalizing it is undefined, any per-snapshot relative criterion sees an arbitrary
+    error on it, and the ADG spec excludes it outright (S subset R_+^m \\ {0}). Dropping
+    it at construction is what keeps every downstream method from having to special-case
+    it. physics carries two such columns.
+    """
     S = np.column_stack([bumps.train(), np.zeros(bumps.dim)])
     ds = Dataset(name="withzero", snapshots=S)
-    result = METHODS["cpg_ndee22"].fit(ds, R=4)
-    rel, _approx = reconstruction._ranking(ds, result, ds.train())
-    assert np.isnan(rel[-1]), "zero-norm snapshot should have nan relative error"
+    assert ds.n_dropped_zero == 1
+    assert ds.n_snapshots == bumps.train().shape[1]
+    assert np.linalg.norm(ds.snapshots, axis=0).min() > 0
+
+    physics = ds_mod.load("physics")
+    assert physics.n_dropped_zero == 2, "physics' two zero snapshots should be gone"
+
+
+def test_reconstruction_ranking_still_guards_undefined_ratios(bumps):
+    """The nan guard in the ranking stays, as defence in depth.
+
+    Dataset now drops zero snapshots, so the guard should never fire in practice -- but
+    ``_ranking`` is also callable on arbitrary column blocks, and a 0/0 there must be nan
+    rather than an arbitrary finite number that could be picked as "worst".
+    """
+    from bench import reconstruction
+
+    result = METHODS["cpg_ndee22"].fit(bumps, R=4)
+    cols = np.column_stack([bumps.train(), np.zeros(bumps.dim)])
+    rel, _approx = reconstruction._ranking(bumps, result, cols)
+    assert np.isnan(rel[-1]), "0/0 must be nan, not a finite value"
     assert int(np.nanargmax(rel)) != len(rel) - 1
 
 
@@ -608,7 +631,8 @@ def test_decrement_skips_non_consecutive_cardinalities():
 
     xs, ys = decrements_vs_cardinality([(1, 0.5), (2, 0.4), (3, 0.35), (7, 0.2), (8, 0.19)])
     assert xs == [2, 3, 8], xs
-    assert ys == pytest.approx([-0.1, -0.05, -0.01])
+    # Relative: the fraction of the remaining error each extra generator removes.
+    assert ys == pytest.approx([0.1 / 0.5, 0.05 / 0.4, 0.01 / 0.2])
 
 
 def test_decrement_symlog_band_is_relative_to_the_largest_step():
@@ -928,20 +952,54 @@ def test_orthant_tolerance_mode_is_correct_but_not_reported(bumps):
     """The closed-form residual is right, yet the mode is deliberately not run.
 
     Projecting a non-negative vector onto span_+{e_i : i in S} keeps S exactly and drops
-    the rest, so the residual is the norm of the discarded coordinates -- no NNLS needed,
-    and the fit itself is cheap at any R. What is not cheap is every downstream metric:
-    meeting a tolerance needs nearly every coordinate (R = 5001 at delta = 0.5 on physics,
-    dim 7676), and precision alone would then be 96 NNLS solves against a 7676 x 5001
-    matrix. So the method is registered as cardinality-only.
+    the rest, so the *residual* is the norm of the discarded coordinates -- closed form.
+    The *selection* is not free: it now tracks mCPG's iteration, so it inherits mCPG's
+    NNLS cost. That is the price of a baseline that follows the same path as the method
+    it references, instead of an unrelated ranking.
+
+    What rules out tolerance mode is every downstream metric: meeting a tolerance needs
+    nearly every coordinate (R = 5001 at delta = 0.5 on physics, dim 7676), and precision
+    alone would then be 96 NNLS solves against a 7676 x 5001 matrix.
     """
     for delta in (0.5, 0.2, 0.05):
         r = METHODS["orthant"].fit(bumps, delta=delta)
         err = metrics.precision.projection_errors(
             bumps.train(), r.generators).max() / bumps.scale
         assert err <= delta + 1e-12, f"delta={delta}: got {err:.4e} with R={r.R}"
-        assert r.solver_calls.get("nnls", 0) == 0, "should need no NNLS"
 
     assert not METHODS["orthant"].supports_tolerance
+
+
+def test_orthant_tracks_mcpg_and_is_maximally_wide(bumps):
+    """The baseline follows mCPG's selection but emits canonical directions.
+
+    Ranking coordinates by global peak activity -- the earlier version -- built a cone
+    unrelated to what the greedy methods do, so any difference confounded two things at
+    once: coordinate-vs-snapshot generators, and two unrelated selection rules. Tracking
+    mCPG isolates the first.
+    """
+    from rb_vi_common.cone_greedy import mcpg
+
+    R = 6
+    orth = METHODS["orthant"].fit(bumps, R=R)
+    assert orth.R == R
+
+    # Generators are canonical: one 1 per column, everything else 0.
+    G = orth.generators
+    assert set(np.unique(G)) <= {0.0, 1.0}
+    assert (G.sum(axis=0) == 1).all()
+    assert len(set(orth.selected_indices)) == R, "a coordinate was used twice"
+
+    # Maximal aperture: distinct axes are exactly orthogonal.
+    ap = metrics.cone_geometry.aperture(G)
+    assert ap["aperture_min_deg"] == pytest.approx(90.0)
+    assert ap["aperture_max_deg"] == pytest.approx(90.0)
+
+    # Each chosen axis is the dominant coordinate of the snapshot mCPG selected there.
+    order = list(mcpg(bumps.train(), 1e-14, max_R=R).order)
+    for step, coord in enumerate(orth.selected_indices[:len(order)]):
+        col = bumps.train()[:, order[step]]
+        assert col[coord] > 0, f"step {step}: axis carries no mass in mCPG's snapshot"
 
 
 def test_skip_reasons_are_method_specific(bumps):

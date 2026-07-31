@@ -38,7 +38,7 @@ import numpy as np
 
 from . import datasets as ds_mod, geometry, layout
 from .adapters import DEFAULT_METHODS, METHODS
-from .figures import STYLE
+from .figures import FIGURE_EXCLUDED, STYLE
 from .metrics.precision import reconstruct, uses_cone_projection
 from .runner import _subsample
 
@@ -250,7 +250,7 @@ def main(argv=None) -> int:
             columns = dataset.train()
 
         fitted = {}
-        for m in args.methods:
+        for m in [k for k in args.methods if k not in FIGURE_EXCLUDED]:
             try:
                 fitted[m] = METHODS[m].fit(dataset, R=args.R)
             except Exception as exc:                   # noqa: BLE001

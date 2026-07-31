@@ -16,10 +16,10 @@ Four panels per dataset, one line per method:
 * **offline cost** -- total constrained-solver calls, log scale. Machine-independent,
   unlike wall-clock.
 
-The ``orthant`` baseline is drawn dashed: it is a reference, not a competitor. Its
-generators are coordinate directions, so it preserves ``lambda >= 0`` trivially and at
-``R = dim`` it is the whole positive orthant -- the largest cone these methods are allowed
-to build. A method that cannot beat it is not earning its offline cost.
+The ``orthant`` and ``pod_control`` references are **measured but not drawn** -- see
+``FIGURE_EXCLUDED``. Both sit orders of magnitude from the methods under comparison and
+plotting them costs the shared axis its resolution. Their values remain in ``grid.csv``
+and ``report.txt``.
 """
 
 from __future__ import annotations
@@ -62,11 +62,12 @@ STYLE: dict[str, dict] = {
 #: ``K_full`` perfectly while extending far beyond it, or sit strictly inside while
 #: missing most of it. ``excess`` uses a LINEAR axis on purpose -- it is exactly zero for
 #: any method whose generators are snapshots, and a log axis would drop those series
-#: entirely, making "contains no excess" indistinguishable from "not measured".
+#: entirely, making "contains no excess" indistinguishable from "not measured". symlog
+#: gives the decades where they matter while keeping an exact zero on the axis.
 CONE_PANELS = (
     ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "log",
      "how much of the full cone is MISSED (too small)"),
-    ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "linear",
+    ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "symlog",
      "how much of the cone lies OUTSIDE (too large)"),
     ("cone_hausdorff",    "two-sided distance",                "log",
      r"$\max$(missed, excess) — 0 iff the cones coincide"),
@@ -133,27 +134,33 @@ def load_cardinality_rows(path: Path) -> dict[str, dict[str, list[tuple[float, d
     return out
 
 
+#: Methods measured in every table but omitted from every figure.
+#:
+#: Both are *references*, not competitors, and both sit orders of magnitude away from the
+#: methods being compared -- the orthant because it is the widest admissible cone (90 deg
+#: aperture, near-total excess), POD because its error falls to machine zero past the
+#: numerical rank. Plotting either forces the shared axis to span their range and squeezes
+#: the four curves that matter into a thin band. Their numbers stay in ``grid.csv`` and
+#: ``report.txt``, where a reader can consult them without paying for them visually.
+FIGURE_EXCLUDED: frozenset[str] = frozenset({"orthant", "pod_control"})
+
+
 def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False):
     plotted = 0
     primary: list[float] = []
+    series = {m: p for m, p in series.items() if m not in FIGURE_EXCLUDED}
     for method, points in series.items():
         style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
         xs = [R for R, _ in points]
         ys = [_num(row, column) for _, row in points]
-        good = [(x, y) for x, y in zip(xs, ys) if not math.isnan(y) and (yscale != "log" or y > 0)]
+        good = [(x, y) for x, y in zip(xs, ys)
+                if not math.isnan(y) and (yscale != "log" or y > 0)]
         if not good:
             continue
         ax.plot([g[0] for g in good], [g[1] for g in good],
                 color=style["color"], marker=style["marker"], ls=style["ls"],
                 label=style["label"], ms=4, lw=1.4, alpha=0.9)
-        # POD and the orthant are excluded from the y-range: both are references whose
-        # error collapses far below the methods being compared -- POD once R reaches the
-        # numerical rank, the orthant because it reproduces non-negative snapshots exactly
-        # on its retained coordinates. Letting either set the scale compresses every curve
-        # actually being compared into a thin band. Both stay plotted, and clip where they
-        # dive.
-        if method not in ("pod_control", "orthant"):
-            primary.extend(g[1] for g in good)
+        primary.extend(g[1] for g in good)
         plotted += 1
         if dashed_train:
             yt = [_num(row, "train_max_rel_err") for _, row in points]
@@ -161,7 +168,13 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False):
             if gt:
                 ax.plot([g[0] for g in gt], [g[1] for g in gt],
                         color=style["color"], ls=":", lw=0.9, alpha=0.45)
-    ax.set_yscale(yscale)
+    if yscale == "symlog":
+        # Linear band two decades below the largest value: keeps exact zeros on the axis
+        # while letting the decades above be read.
+        mags = [abs(v) for v in primary if v != 0]
+        ax.set_yscale("symlog", linthresh=(max(mags) * 1e-2) if mags else 1e-12)
+    else:
+        ax.set_yscale(yscale)
     # Scale to the primary (test) series. The train overlay reaches machine zero as soon
     # as the cone contains every training snapshot, and on a log axis that single
     # excursion to 1e-16 squeezes every curve worth comparing into a band at the top.

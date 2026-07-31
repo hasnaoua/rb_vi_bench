@@ -103,6 +103,23 @@ class Dataset:
     #: any dataset whose contact nodes tile a surface, so it must be set wherever the
     #: source knows its own geometry.
     geometry: object | None = None
+    #: How many numerically-zero snapshots were discarded at construction.
+    n_dropped_zero: int = 0
+
+    #: Snapshots whose norm falls below this fraction of the largest are dropped at
+    #: construction, before any algorithm sees them.
+    #:
+    #: They are not data, they are absence of data: a parameter value at which no contact
+    #: occurred, so ``lambda = 0`` everywhere. ``physics`` carries two, at norm ~7e-67
+    #: against a typical 2e9. Keeping them corrupts every angle-based method, because
+    #: normalizing a zero vector is undefined and any per-snapshot relative criterion sees
+    #: an arbitrarily large relative error on a vector that carries no information. It
+    #: also violates the ADG spec's own precondition ``S subset R_+^m \ {0}``.
+    #:
+    #: The threshold is deliberately at the numerical-zero scale rather than at a
+    #: "physically small" one: dropping genuinely small but non-zero contact states would
+    #: be a modelling decision, not a numerical hygiene one.
+    ZERO_NORM_RTOL: float = 1e-8
 
     def __post_init__(self) -> None:
         S = np.asarray(self.snapshots, dtype=float)
@@ -110,6 +127,29 @@ class Dataset:
             raise ValueError(f"{self.name}: snapshots must be 2-D (dim, n), got {S.shape}")
         if S.shape[1] == 0:
             raise ValueError(f"{self.name}: no snapshots")
+
+        norms = np.linalg.norm(S, axis=0)
+        scale = float(norms.max()) if norms.size else 0.0
+        keep = norms > self.ZERO_NORM_RTOL * scale if scale > 0 else np.ones(S.shape[1], bool)
+        if not keep.all():
+            S = S[:, keep]
+            if S.shape[1] == 0:
+                raise ValueError(f"{self.name}: every snapshot is numerically zero")
+            # Index-valued fields must be remapped onto the surviving columns, not merely
+            # filtered: a stale index would silently point at a different snapshot.
+            remap = {old: new for new, old in enumerate(np.flatnonzero(keep))}
+            for attr in ("train_idx", "test_idx"):
+                sel = getattr(self, attr)
+                if sel is not None:
+                    kept = [remap[int(i)] for i in sel if int(i) in remap]
+                    object.__setattr__(self, attr,
+                                       np.asarray(kept, int) if kept else None)
+            if self.params is not None:
+                object.__setattr__(self, "params", np.asarray(self.params)[keep])
+            if self.primal_snapshots is not None:
+                object.__setattr__(self, "primal_snapshots",
+                                   np.asarray(self.primal_snapshots)[:, keep])
+            object.__setattr__(self, "n_dropped_zero", int((~keep).sum()))
         # Clip round-off negatives rather than hiding a real sign error: anything
         # beyond solver noise means the HF solve is wrong, and a cone built from it
         # cannot represent its own snapshots.

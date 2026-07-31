@@ -78,46 +78,85 @@ def fit_nmf_seed2(dataset, *, delta=None, R=None) -> BasisResult:
 
 
 def fit_orthant(dataset, *, delta=None, R=None) -> BasisResult:
-    """``span_+`` of the R most active coordinate directions -- the naive valid basis.
+    """Canonical directions selected along **mCPG's own iteration** -- the widest cone.
 
     The counterpart to POD at the other extreme. POD is the *smart but inadmissible*
     reference: optimal in least squares, but its mixed-sign modes cannot build ``W_R^+``
-    at all. This is the *naive but admissible* one: generators are standard basis vectors
-    ``e_i``, so non-negativity is preserved trivially, and at ``R = dim`` it is the whole
-    positive orthant ``W^+`` -- the largest cone any of these methods is allowed to build.
+    at all. This is the *admissible but maximally wide* one -- generators are standard
+    basis vectors ``e_i``, so non-negativity holds trivially, every pair is exactly 90
+    degrees apart (the largest aperture any cone in ``W^+`` can have), and at ``R = dim``
+    it is the whole positive orthant.
 
-    It uses no information about the snapshot manifold beyond which coordinates carry
-    multiplier mass, so a cone method that cannot beat it is not earning its offline cost.
-    It is also the natural upper anchor for the excess axis in ``metrics.cone_geometry``:
-    ``W^+`` contains ``K_full`` entirely, so it misses nothing and is maximally too large.
+    **How the directions are chosen matters, and an earlier version got it wrong.**
+    Ranking coordinates by global peak activity ``max_q theta_{q,i}`` builds a cone that
+    has nothing to do with what the greedy methods are doing, so differences between it
+    and mCPG confounded two things at once: coordinate-vs-snapshot generators, and two
+    unrelated selection rules.
 
-    Coordinates are ranked by peak activity ``max_q theta_{q,i}``, and the projection onto
-    ``span_+{e_i : i in S}`` of a non-negative vector is exact on ``S`` and drops
-    everything else -- so the residual is just the norm of the discarded coordinates,
-    computable in closed form with no NNLS. That makes both modes cheap and exact.
+    Instead this **tracks mCPG's iteration**. mCPG is run to the same cardinality, and at
+    each of its steps -- where it would append its cone-constrained residual ``nu_r`` --
+    this appends the dominant *canonical* direction of the snapshot mCPG just selected,
+    skipping coordinates already taken. Selection order is therefore mCPG's, and the only
+    difference is the generator: a canonical axis instead of mCPG's vector. That isolates
+    the question the baseline exists to answer -- what does replacing a greedy generator
+    with the widest possible admissible direction cost or buy?
+
+    Projection onto ``span_+{e_i : i in S}`` of a non-negative vector keeps ``S`` exactly
+    and drops the rest, so the residual is the norm of the discarded coordinates -- closed
+    form, no NNLS.
     """
+    from rb_vi_common.cone_greedy import mcpg
+
     train = dataset.train()
-    dim = train.shape[0]
-    activity = train.max(axis=1)
-    order = np.argsort(activity)[::-1]
+    dim, n = train.shape
 
     t0 = time.perf_counter()
     with count_solver_calls() as counts:
-        # Residual of snapshot q after keeping the first k coordinates of `order` is the
-        # norm of what is dropped -- a suffix sum of squares in that ordering.
-        sq = train[order, :] ** 2
-        tail = np.concatenate([np.cumsum(sq[::-1], axis=0)[::-1][1:],
-                               np.zeros((1, train.shape[1]))])
-        worst = np.sqrt(np.max(tail, axis=1))
-        if R is not None:
-            k = int(min(max(R, 0), dim))
-        else:
-            rel = worst / dataset.scale
-            below = np.flatnonzero(rel <= float(delta))
-            k = int(below[0] + 1) if below.size else dim
-        keep = order[:k]
-        G = np.zeros((dim, k))
-        G[keep, np.arange(k)] = 1.0
+        cap = dim if R is None else min(int(R), dim)
+        # mCPG's selection order. A tiny tolerance with max_R lets the cardinality be set
+        # by the cap rather than by a stopping rule, so the two stay step-for-step aligned.
+        order = list(mcpg(train, 1e-14, max_R=min(cap, n)).order)
+
+        chosen: list[int] = []
+        seen: set[int] = set()
+        for q in order:
+            if len(chosen) >= cap:
+                break
+            # Dominant not-yet-taken coordinate of the snapshot mCPG selected at this step.
+            ranked = np.argsort(train[:, q])[::-1]
+            for i in ranked:
+                i = int(i)
+                if i not in seen and train[i, q] > 0:
+                    chosen.append(i)
+                    seen.add(i)
+                    break
+
+        # mCPG can stop before `cap` (it caps at the number of snapshots). Top up with the
+        # globally most active remaining coordinates so the cone still reaches R, and so
+        # the R = dim limit really is the whole orthant.
+        if len(chosen) < cap:
+            for i in np.argsort(train.max(axis=1))[::-1]:
+                if len(chosen) >= cap:
+                    break
+                i = int(i)
+                if i not in seen:
+                    chosen.append(i)
+                    seen.add(i)
+
+        if delta is not None and R is None:
+            # Trim to the shortest prefix meeting the tolerance, using the closed form.
+            keep_mask = np.zeros(dim, bool)
+            k = len(chosen)
+            for j, i in enumerate(chosen, start=1):
+                keep_mask[i] = True
+                resid = np.sqrt(np.sum(train[~keep_mask, :] ** 2, axis=0)).max()
+                if resid / dataset.scale <= float(delta):
+                    k = j
+                    break
+            chosen = chosen[:k]
+
+        G = np.zeros((dim, len(chosen)))
+        G[chosen, np.arange(len(chosen))] = 1.0
     seconds = time.perf_counter() - t0
 
     return BasisResult(
@@ -125,13 +164,14 @@ def fit_orthant(dataset, *, delta=None, R=None) -> BasisResult:
         family="baseline",
         paper_tag="",
         generators=G,
-        R=k,
-        selected_indices=[int(i) for i in keep],   # coordinates, not snapshots
+        R=len(chosen),
+        selected_indices=[int(i) for i in chosen],   # coordinates, not snapshots
         errors=[],
         fit_seconds=seconds,
         solver_calls=summarize(counts),
         normalized_generators=True,
-        notes=f"span_+ of {k} coordinate directions; = W^+ at R = dim ({dim})",
+        notes=(f"canonical directions along mCPG's iteration; {len(chosen)} of {dim} "
+               f"axes, all mutually orthogonal (90 deg aperture)"),
     )
 
 

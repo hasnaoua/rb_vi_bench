@@ -1,24 +1,31 @@
-"""Marginal error decrement ``e(n+1) - e(n)``, per dataset, all methods in one figure.
+"""Relative error decrement ``(e(n) - e(n+1)) / e(n)``, per dataset, all methods at once.
 
 The precision curves say how much error remains. These say what the *next generator buys
 you* -- which is the quantity that decides where to stop, and the one that separates
 methods whose error curves look nearly identical.
 
-The value plotted is the signed difference, so it is **negative** wherever the method is
-still improving. That sign is meaningful and is kept rather than plotting a magnitude: a
-non-negative decrement means an added generator bought nothing, which for a nested cone
-is the point at which the greedy has stalled. A **symlog** y-axis is used because the
-decrements span several orders of magnitude *and* must accommodate zero and the
-occasional non-negative excursion; a plain log axis would silently drop exactly the
-points worth seeing.
+The value plotted is the **fraction of the remaining error removed** by one more
+generator, ``(e(n) - e(n+1)) / e(n)``. It is *positive* wherever the method improves, and
+0 where the extra generator bought nothing.
+
+Relative, not absolute. An absolute decrement ``e(n+1) - e(n)`` is dominated by wherever
+the error happens to be large, so early iterations swamp late ones and two methods sitting
+at different error levels cannot be compared at all -- a method with twice the error looks
+twice as good per step. Dividing by ``e(n)`` asks the scale-free question instead: *what
+share of what is left does this generator remove?* That is comparable across methods,
+across cardinalities, and across datasets whose errors differ by decades.
+
+A **symlog** y-axis is used because the fractions span several orders of magnitude *and*
+must accommodate exact 0 and the occasional negative excursion (a method going backwards);
+a plain log axis would silently drop exactly the points worth seeing.
 
 Two x-axes, from two different modes:
 
-* **vs cardinality** -- ``e(R+1) - e(R)`` from matched-cardinality rows. Needs
+* **vs cardinality** -- ``(e(R) - e(R+1)) / e(R)`` from matched-cardinality rows. Needs
   *consecutive* R to mean "one more generator", so it is read from a sweep run with
   ``--cardinalities 1 2 3 ... N``. Gaps in R are skipped rather than divided through,
   because ``e(R+4) - e(R)`` is not a per-generator decrement.
-* **vs tolerance** -- ``e(eps_{k+1}) - e(eps_k)`` over the tolerance grid, ordered from
+* **vs tolerance** -- ``(e(eps_k) - e(eps_{k+1})) / e(eps_k)`` over the grid, ordered from
   loose to tight. This answers a different question: what tightening the *request* buys,
   which is the interface [BEE20] §5 argues for. The two are not interchangeable, since
   a method's R is its own response to eps.
@@ -44,7 +51,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from . import layout
-from .figures import STYLE, _num
+from .figures import FIGURE_EXCLUDED, STYLE, _num
 
 RESULTS = _paths.ROOT / "results"
 
@@ -61,7 +68,7 @@ def _rows(path: Path, mode: str) -> dict[str, dict[str, list[dict]]]:
 
 
 def decrements_vs_cardinality(points: list[tuple[float, float]]) -> tuple[list, list]:
-    """``e(R+1) - e(R)`` for consecutive R only.
+    """``(e(R) - e(R+1)) / e(R)`` for consecutive R only.
 
     A gap in R is skipped, not interpolated: ``e(R+4) - e(R)`` is the value of four
     generators, and dividing by the gap would fabricate a per-generator figure the data
@@ -73,19 +80,23 @@ def decrements_vs_cardinality(points: list[tuple[float, float]]) -> tuple[list, 
             continue
         if math.isnan(e0) or math.isnan(e1):
             continue
+        if e0 <= 0:
+            continue          # nothing left to remove; the fraction is undefined
         xs.append(r1)
-        ys.append(e1 - e0)
+        ys.append((e0 - e1) / e0)
     return xs, ys
 
 
 def decrements_vs_tolerance(points: list[tuple[float, float]]) -> tuple[list, list]:
-    """``e(eps_{k+1}) - e(eps_k)`` walking the tolerance grid from loose to tight."""
+    """``(e(eps_k) - e(eps_{k+1})) / e(eps_k)`` walking the grid from loose to tight."""
     xs, ys = [], []
     for (t0, e0), (t1, e1) in zip(points, points[1:]):
         if math.isnan(e0) or math.isnan(e1):
             continue
+        if e0 <= 0:
+            continue
         xs.append(t1)
-        ys.append(e1 - e0)
+        ys.append((e0 - e1) / e0)
     return xs, ys
 
 
@@ -98,7 +109,7 @@ def _symlog_threshold(values) -> float:
     every round-off wobble on a plateaued curve into a full-height excursion -- the
     figure becomes an unreadable comb.
 
-    Two decades below the largest decrement. That band is deliberately wide, because
+    Two decades below the largest fraction. That band is deliberately wide, because
     much of the combing here is **real data** rather than noise and still should not
     dominate the axis: ADG admits every snapshot tied at ``theta_max`` as one batch, so
     truncating at an intermediate R can add a generator that changes nothing (an exact
@@ -115,6 +126,7 @@ def _symlog_threshold(values) -> float:
 
 def _draw(ax, series, xlabel, title, xscale):
     everything = []
+    series = {m: v for m, v in series.items() if m not in FIGURE_EXCLUDED}
     for method, (xs, ys) in series.items():
         if not xs:
             continue
@@ -128,7 +140,7 @@ def _draw(ax, series, xlabel, title, xscale):
     ax.set_yscale("symlog", linthresh=_symlog_threshold(everything))
     ax.set_xscale(xscale)
     ax.set_xlabel(xlabel)
-    ax.set_ylabel(r"$e(n{+}1) - e(n)$   (train)")
+    ax.set_ylabel(r"$\left(e(n)-e(n{+}1)\right)/e(n)$   (train)")
     ax.set_title(title, fontsize=10)
     ax.grid(alpha=0.25, lw=0.5)
     return 1
@@ -161,7 +173,8 @@ def figure_vs_cardinality(dataset, rows_by_method, out: Path) -> Path | None:
         return None
     ax.legend(fontsize=7.5, ncol=2, frameon=False, loc="best")
     fig.text(0.5, -0.02,
-             "negative = still improving;  0 = the extra generator bought nothing",
+             "fraction of the remaining error removed by one more generator;  "
+             "0 = it bought nothing",
              ha="center", fontsize=8, color="#555555")
     fig.tight_layout()
     path = layout.ensure(layout.decrement_dir(out, dataset)) / "vs_cardinality.png"
