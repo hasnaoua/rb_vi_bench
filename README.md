@@ -85,7 +85,24 @@ Every table and figure carries **one canonical implementation per algorithm**
 | mCPG | `mcpg` — `[NDEE22]` Algorithm 2 |
 | ADG | `AngularDefectGreedy`, normalized (standard) form on `S_norm` |
 | NMF | `[BEE20]` §6.4, one seed |
-| POD | negative control |
+| orthant `W⁺` | `span₊` of the R most active coordinates — the naive admissible baseline |
+
+**POD is not reported.** It was carried as a negative control — the unattainable
+least-squares floor — but it is not a dual basis at all: `[BEE20]` §5 rules it out because
+its mixed-sign modes cannot build `W_R^+`. Scoring it beside methods bound by `λ ≥ 0`
+compares different problems, and it cost an axis range in every figure without informing
+the comparison. It stays registered and reachable via `--methods` for the sign-violation
+checks in the test suite.
+
+Its place is taken by the **orthant**, which is the reference that *is* pertinent.
+Generators are standard basis vectors `eᵢ`, so non-negativity holds trivially, and at
+`R = dim` it is the whole positive orthant `W⁺` — the largest cone any of these methods is
+allowed to build. It uses no information about the snapshot manifold beyond which
+coordinates carry multiplier mass, so **a cone method that cannot beat it is not earning
+its offline cost**. It also anchors the cone-geometry axes from above: `W⁺` contains
+`K_full` entirely, so it misses nothing and is maximally too large. Both its modes are
+closed-form — projecting a non-negative vector onto `span₊{eᵢ : i ∈ S}` keeps `S` and drops
+the rest, so the residual is the norm of the discarded coordinates and no NNLS is needed.
 
 The duplicates stay registered and reachable via `--methods`. They are not redundant —
 they are the *input* to the agreement metric, and `agreement.csv` is built from

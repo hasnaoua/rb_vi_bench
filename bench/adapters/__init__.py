@@ -27,6 +27,9 @@ class Method:
     cone_method: bool = True
     deterministic: bool = True
     description: str = ""
+    #: Why this method cannot run in tolerance mode. Method-specific, because the reasons
+    #: genuinely differ and one shared message would misattribute them.
+    tolerance_note: str = "method is cardinality-only ([BEE20] §5)"
 
 
 METHODS: dict[str, Method] = {
@@ -119,6 +122,20 @@ METHODS: dict[str, Method] = {
             description="third seed, to expose NMF's non-determinism",
         ),
         Method(
+            key="orthant",
+            label="orthant $W^+$ (naive baseline)",
+            fit=baselines.fit_orthant,
+            family="baseline",
+            paper_tag="",
+            supports_tolerance=False,
+            description="span_+ of the R most active coordinates; = W^+ at R = dim",
+            tolerance_note=(
+                "orthant is reported at matched cardinality only: meeting a tolerance "
+                "needs nearly every coordinate (R = 5001 at delta=0.5, 7351 at "
+                "delta=0.01 on physics, dim 7676) -- itself the finding, but it makes "
+                "every O(R) metric intractable"),
+        ),
+        Method(
             key="pod_control",
             label="POD (negative control)",
             fit=baselines.fit_pod,
@@ -157,6 +174,17 @@ TOLERANCE_METHODS = tuple(k for k, m in METHODS.items() if m.supports_tolerance)
 #: generated from ``CROSS_FAMILY_PAIRS`` regardless of this set, so the check keeps
 #: running.
 #:
+#: **POD is deliberately absent.** It was carried as a negative control -- the
+#: unattainable least-squares floor -- but it is not a dual basis at all: [BEE20] §5 rules
+#: it out because its mixed-sign modes cannot build ``W_R^+``. Scoring it beside methods
+#: that must respect ``lambda >= 0`` compares different problems, and its presence in
+#: every figure cost an axis range without informing the comparison. It stays registered
+#: and reachable via ``--methods`` for the sign-violation checks in the test suite.
+#:
+#: Its place is taken by ``orthant``, which is the reference that *is* pertinent: the
+#: naive admissible basis, and at ``R = dim`` the whole positive orthant -- the largest
+#: cone any of these methods is allowed to build.
+#:
 #: NMF's other seeds likewise remain available: its across-seed spread is the
 #: non-determinism [BEE20] §5 raises against it, measured by ``stability.determinism``.
 DEFAULT_METHODS: tuple[str, ...] = (
@@ -164,7 +192,7 @@ DEFAULT_METHODS: tuple[str, ...] = (
     "mcpg_ndee22",
     "adg",
     "nmf_s0",
-    "pod_control",
+    "orthant",
 )
 
 __all__ = ["METHODS", "Method", "CROSS_FAMILY_PAIRS", "CONE_METHODS",

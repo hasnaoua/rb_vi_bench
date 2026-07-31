@@ -111,7 +111,7 @@ def run_cell(dataset: Dataset, method_key: str, *, delta=None, R=None,
     }
 
     if R is None and not method.supports_tolerance:
-        row["skip_reason"] = "method is cardinality-only ([BEE20] §5)"
+        row["skip_reason"] = method.tolerance_note
         return row
 
     try:

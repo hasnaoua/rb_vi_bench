@@ -206,9 +206,24 @@ def reach_outside(dataset: Dataset, generators: np.ndarray) -> dict[str, float]:
     }
 
 
+#: Above this many generators the sampled statistics are skipped.
+#:
+#: Every one of them costs an NNLS solve against a ``dim x R`` matrix, so the work grows
+#: superlinearly in ``R`` while the answer stops being informative: a cone with thousands
+#: of generators is essentially ``W^+`` already, so its coverage is ~0 and its excess is
+#: ~maximal by construction, whatever the method. The case that forces this is the
+#: orthant baseline in tolerance mode -- on ``physics`` (dim 7676) it needs R = 5001 at
+#: delta = 0.5 and R = 7351 at delta = 0.01, which is itself the informative result and is
+#: still reported. Only the O(R) sampled geometry is dropped, with a reason recorded.
+MAX_R_FOR_SAMPLING = 512
+
+
 def evaluate(dataset: Dataset, result: BasisResult, *,
              n_samples: int = 48, seed: int = 0) -> dict[str, float]:
     """Cone-geometry row for one (dataset, method) cell."""
+    if result.R > MAX_R_FOR_SAMPLING:
+        # Absent, not zero: a zero here would read as "covers K_full perfectly".
+        return {"cone_geometry_skipped_R": float(result.R)}
     row: dict[str, float] = {}
     row.update(coverage(dataset, result.generators, n_samples=n_samples, seed=seed))
     row.update(excess(dataset, result.generators, n_samples=n_samples, seed=seed + 1))

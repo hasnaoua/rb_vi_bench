@@ -16,8 +16,10 @@ Four panels per dataset, one line per method:
 * **offline cost** -- total constrained-solver calls, log scale. Machine-independent,
   unlike wall-clock.
 
-POD is drawn dashed and grey throughout: it is a negative control, not a competitor, and
-its curve is an unattainable floor rather than a result (see the README).
+The ``orthant`` baseline is drawn dashed: it is a reference, not a competitor. Its
+generators are coordinate directions, so it preserves ``lambda >= 0`` trivially and at
+``R = dim`` it is the whole positive orthant -- the largest cone these methods are allowed
+to build. A method that cannot beat it is not earning its offline cost.
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ STYLE: dict[str, dict] = {
     "nmf_s0":      dict(color="#c0392b", marker="v", ls="-",  label="NMF (seed 0)"),
     "nmf_s1":      dict(color="#d98880", marker="v", ls=":",  label="NMF (seed 1)"),
     "nmf_s2":      dict(color="#e6b0aa", marker="v", ls=":",  label="NMF (seed 2)"),
+    "orthant":     dict(color="#6c3483", marker="P", ls="--", label=r"orthant $W^+$"),
     "pod_control": dict(color="#7f8c8d", marker="x", ls="--", label="POD (control)"),
 }
 
@@ -143,11 +146,13 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False):
         ax.plot([g[0] for g in good], [g[1] for g in good],
                 color=style["color"], marker=style["marker"], ls=style["ls"],
                 label=style["label"], ms=4, lw=1.4, alpha=0.9)
-        # POD is deliberately excluded from the y-range: it is a negative control whose
-        # error falls to machine zero once R reaches the numerical rank, and letting that
-        # set the scale compresses every curve actually being compared into a thin band.
-        # It stays plotted, and clips off the bottom where it dives.
-        if method != "pod_control":
+        # POD and the orthant are excluded from the y-range: both are references whose
+        # error collapses far below the methods being compared -- POD once R reaches the
+        # numerical rank, the orthant because it reproduces non-negative snapshots exactly
+        # on its retained coordinates. Letting either set the scale compresses every curve
+        # actually being compared into a thin band. Both stay plotted, and clip where they
+        # dive.
+        if method not in ("pod_control", "orthant"):
             primary.extend(g[1] for g in good)
         plotted += 1
         if dashed_train:

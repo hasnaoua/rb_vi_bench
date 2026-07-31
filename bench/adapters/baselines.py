@@ -77,6 +77,64 @@ def fit_nmf_seed2(dataset, *, delta=None, R=None) -> BasisResult:
     return fit_nmf(dataset, delta=delta, R=R, seed=2)
 
 
+def fit_orthant(dataset, *, delta=None, R=None) -> BasisResult:
+    """``span_+`` of the R most active coordinate directions -- the naive valid basis.
+
+    The counterpart to POD at the other extreme. POD is the *smart but inadmissible*
+    reference: optimal in least squares, but its mixed-sign modes cannot build ``W_R^+``
+    at all. This is the *naive but admissible* one: generators are standard basis vectors
+    ``e_i``, so non-negativity is preserved trivially, and at ``R = dim`` it is the whole
+    positive orthant ``W^+`` -- the largest cone any of these methods is allowed to build.
+
+    It uses no information about the snapshot manifold beyond which coordinates carry
+    multiplier mass, so a cone method that cannot beat it is not earning its offline cost.
+    It is also the natural upper anchor for the excess axis in ``metrics.cone_geometry``:
+    ``W^+`` contains ``K_full`` entirely, so it misses nothing and is maximally too large.
+
+    Coordinates are ranked by peak activity ``max_q theta_{q,i}``, and the projection onto
+    ``span_+{e_i : i in S}`` of a non-negative vector is exact on ``S`` and drops
+    everything else -- so the residual is just the norm of the discarded coordinates,
+    computable in closed form with no NNLS. That makes both modes cheap and exact.
+    """
+    train = dataset.train()
+    dim = train.shape[0]
+    activity = train.max(axis=1)
+    order = np.argsort(activity)[::-1]
+
+    t0 = time.perf_counter()
+    with count_solver_calls() as counts:
+        # Residual of snapshot q after keeping the first k coordinates of `order` is the
+        # norm of what is dropped -- a suffix sum of squares in that ordering.
+        sq = train[order, :] ** 2
+        tail = np.concatenate([np.cumsum(sq[::-1], axis=0)[::-1][1:],
+                               np.zeros((1, train.shape[1]))])
+        worst = np.sqrt(np.max(tail, axis=1))
+        if R is not None:
+            k = int(min(max(R, 0), dim))
+        else:
+            rel = worst / dataset.scale
+            below = np.flatnonzero(rel <= float(delta))
+            k = int(below[0] + 1) if below.size else dim
+        keep = order[:k]
+        G = np.zeros((dim, k))
+        G[keep, np.arange(k)] = 1.0
+    seconds = time.perf_counter() - t0
+
+    return BasisResult(
+        method="orthant",
+        family="baseline",
+        paper_tag="",
+        generators=G,
+        R=k,
+        selected_indices=[int(i) for i in keep],   # coordinates, not snapshots
+        errors=[],
+        fit_seconds=seconds,
+        solver_calls=summarize(counts),
+        normalized_generators=True,
+        notes=f"span_+ of {k} coordinate directions; = W^+ at R = dim ({dim})",
+    )
+
+
 def fit_pod(dataset, *, delta=None, R=None) -> BasisResult:
     """POD of the *dual* snapshots -- the negative control of [BEE20] §5.
 

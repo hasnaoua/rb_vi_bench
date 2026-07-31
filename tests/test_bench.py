@@ -658,7 +658,11 @@ def test_default_methods_are_one_canonical_version_per_algorithm():
     from bench.adapters import DEFAULT_METHODS
 
     assert set(DEFAULT_METHODS) <= set(METHODS)
-    assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "nmf_s0", "pod_control")
+    assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "nmf_s0", "orthant")
+    # POD is deliberately out: it is not a dual basis at all ([BEE20] §5), so scoring it
+    # beside methods bound by lambda >= 0 compares different problems. Still registered
+    # for the sign-violation checks.
+    assert "pod_control" not in DEFAULT_METHODS and "pod_control" in METHODS
 
     # One CPG, one mCPG, one ADG, one NMF.
     for prefix, expected in (("cpg_", 1), ("mcpg_", 1), ("adg", 1), ("nmf_", 1)):
@@ -668,6 +672,8 @@ def test_default_methods_are_one_canonical_version_per_algorithm():
 
     # ADG must be the normalized form, never the non-standard one.
     assert "adg_raw" not in DEFAULT_METHODS
+    # The admissible reference must be present.
+    assert "orthant" in DEFAULT_METHODS
 
     # The duplicates the agreement metric needs are still reachable.
     for a, b in CROSS_FAMILY_PAIRS:
@@ -885,6 +891,100 @@ def test_cone_hausdorff_is_two_sided(bumps):
     for key, row in rows.items():
         assert row["cone_hausdorff"] >= row["cover_max_err"] - 1e-12, key
         assert row["cone_hausdorff"] >= row["excess_max_err"] - 1e-12, key
+
+
+def test_orthant_is_the_maximal_admissible_cone(bumps):
+    """At R = dim the orthant baseline IS W^+, the largest cone these methods may build.
+
+    Three properties define it, and all three are what make it the right reference:
+    it reproduces every non-negative snapshot exactly, it contains ``K_full`` entirely so
+    it misses nothing, and it is strictly larger -- maximal excess. A method beating it on
+    coverage would mean the coverage metric is wrong.
+    """
+    from bench.metrics import cone_geometry
+
+    full = METHODS["orthant"].fit(bumps, R=bumps.dim)
+    assert full.R == bumps.dim
+    assert full.generators.min() >= 0.0
+
+    err = metrics.precision.projection_errors(bumps.train(), full.generators).max()
+    assert err < 1e-12, "W^+ must reproduce non-negative snapshots exactly"
+
+    g = cone_geometry.evaluate(bumps, full, n_samples=24)
+    assert g["cover_mean_err"] == pytest.approx(0.0, abs=1e-9), "W^+ contains K_full"
+    assert g["excess_mean_err"] > 0.1, "W^+ must be strictly larger than K_full"
+
+
+def test_orthant_preserves_nonnegativity_at_every_R(bumps):
+    """Coordinate generators are non-negative, so the reduced multiplier cannot go below 0."""
+    for R in (2, 6, 12):
+        r = METHODS["orthant"].fit(bumps, R=R)
+        viol = metrics.precision.nonnegativity_violation(
+            bumps.train(), r.generators, cone=True)
+        assert viol["max_violation"] <= 1e-12, R
+
+
+def test_orthant_tolerance_mode_is_correct_but_not_reported(bumps):
+    """The closed-form residual is right, yet the mode is deliberately not run.
+
+    Projecting a non-negative vector onto span_+{e_i : i in S} keeps S exactly and drops
+    the rest, so the residual is the norm of the discarded coordinates -- no NNLS needed,
+    and the fit itself is cheap at any R. What is not cheap is every downstream metric:
+    meeting a tolerance needs nearly every coordinate (R = 5001 at delta = 0.5 on physics,
+    dim 7676), and precision alone would then be 96 NNLS solves against a 7676 x 5001
+    matrix. So the method is registered as cardinality-only.
+    """
+    for delta in (0.5, 0.2, 0.05):
+        r = METHODS["orthant"].fit(bumps, delta=delta)
+        err = metrics.precision.projection_errors(
+            bumps.train(), r.generators).max() / bumps.scale
+        assert err <= delta + 1e-12, f"delta={delta}: got {err:.4e} with R={r.R}"
+        assert r.solver_calls.get("nnls", 0) == 0, "should need no NNLS"
+
+    assert not METHODS["orthant"].supports_tolerance
+
+
+def test_skip_reasons_are_method_specific(bumps):
+    """A shared skip message would misattribute why each method sits out.
+
+    NMF is cardinality-only because [BEE20] §5 says so about the algorithm; the orthant
+    is because its tolerance-mode cardinality makes the metrics intractable. Reporting
+    [BEE20] §5 for the orthant would credit the paper with an argument it never made.
+    """
+    from bench.runner import run_cell
+
+    nmf = run_cell(bumps, "nmf_s0", delta=0.2, with_infsup=False, with_determinism=False)
+    orth = run_cell(bumps, "orthant", delta=0.2, with_infsup=False, with_determinism=False)
+    assert "[BEE20] §5" in nmf["skip_reason"]
+    assert "[BEE20] §5" not in orth["skip_reason"]
+    assert "intractable" in orth["skip_reason"]
+
+
+def test_cone_geometry_skips_pathologically_large_cones(bumps):
+    """A cone with thousands of generators must be skipped, not silently reported as 0.
+
+    Each sampled statistic costs an NNLS against a dim x R matrix, so the work explodes
+    while the answer stops meaning anything -- such a cone is essentially W^+ already.
+    The orthant baseline forces this: in tolerance mode on physics (dim 7676) it needs
+    R = 5001 at delta = 0.5. That R is the informative result and is still reported; only
+    the O(R) geometry is dropped, and the skip is recorded so a reader cannot mistake an
+    absent coverage for a perfect one.
+    """
+    from bench.metrics import cone_geometry
+
+    big = METHODS["orthant"].fit(bumps, R=bumps.dim)
+    assert big.R <= cone_geometry.MAX_R_FOR_SAMPLING
+    row = cone_geometry.evaluate(bumps, big, n_samples=8)
+    assert "cover_mean_err" in row, "small cones must still be measured"
+
+    # Force the guard with a synthetic oversized cone.
+    class _Fake:
+        R = cone_geometry.MAX_R_FOR_SAMPLING + 1
+        generators = np.eye(3)
+
+    skipped = cone_geometry.evaluate(bumps, _Fake(), n_samples=8)
+    assert skipped == {"cone_geometry_skipped_R": float(_Fake.R)}
+    assert "cover_mean_err" not in skipped, "a skip must not look like zero error"
 
 
 def test_coverage_improves_with_cardinality(bumps):
