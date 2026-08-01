@@ -529,7 +529,10 @@ def test_figures_render_from_a_grid(tmp_path, bumps):
     for ds in ("bumps", "nosplit"):
         assert not (split_out / ds / "panel.png").exists(), "--no-panel wrote a panel"
         names = sorted(p.stem for p in (split_out / ds / "metrics").glob("*.png"))
-        assert names == ["conditioning", "offline_cost", "orthogonality", "precision"], names
+        # precision_persnap is an EXTRA_SPLIT_PANEL: it exists only here, not in the
+        # 2x2 combined panel, so the grid layout stays square.
+        assert names == ["conditioning", "offline_cost", "orthogonality",
+                         "precision", "precision_persnap"], names
         for p in (split_out / ds / "metrics").glob("*.png"):
             assert p.stat().st_size > 5000, f"{ds}/{p.name} looks empty"
 
@@ -1043,6 +1046,40 @@ def test_cone_geometry_skips_pathologically_large_cones(bumps):
     skipped = cone_geometry.evaluate(bumps, _Fake(), n_samples=8)
     assert skipped == {"cone_geometry_skipped_R": float(_Fake.R)}
     assert "cover_mean_err" not in skipped, "a skip must not look like zero error"
+
+
+def test_per_snapshot_column_is_reported_and_differs_from_the_shared_one():
+    """Both normalizations must be present, and they must actually differ.
+
+    The shared column divides every snapshot by the largest snapshot norm; the
+    per-snapshot one divides each by its own. Where magnitudes spread, a small snapshot
+    can be almost entirely unrepresented while the shared column still reads well --
+    which is exactly the convention ADG's tolerance bounds. If the two columns ever
+    coincided everywhere, the second would be redundant.
+    """
+    ds = ds_mod.load("physics")          # snapshot norms span ~600x
+    row = metrics.precision.evaluate(ds, METHODS["cpg_bee20"].fit(ds, R=8))
+    for key in ("train_max_rel_err", "train_max_rel_err_persnap",
+                "train_mean_rel_err_persnap"):
+        assert key in row, key
+    assert row["train_max_rel_err_persnap"] > 10 * row["train_max_rel_err"], (
+        "on physics the shared column should massively understate the worst snapshot")
+
+    # And the ranking between methods can invert between the two conventions.
+    adg = metrics.precision.evaluate(ds, METHODS["adg"].fit(ds, R=8))
+    cpg = row
+    assert adg["train_max_rel_err"] > cpg["train_max_rel_err"], "shared: ADG behind"
+    assert adg["train_max_rel_err_persnap"] < cpg["train_max_rel_err_persnap"], (
+        "per-snapshot: ADG should lead, since that is the bound it optimizes")
+
+
+def test_per_snapshot_ratio_never_divides_by_zero(bumps):
+    """A zero-norm column contributes nothing rather than an invented ratio."""
+    cols = np.column_stack([bumps.train(), np.zeros(bumps.dim)])
+    errs = np.concatenate([np.full(bumps.train().shape[1], 0.5), [0.0]])
+    ps = metrics.precision.per_snapshot_rel_errors(errs, cols)
+    assert len(ps) == bumps.train().shape[1], "zero column should be dropped, not 0/0"
+    assert np.all(np.isfinite(ps))
 
 
 def test_coverage_improves_with_cardinality(bumps):

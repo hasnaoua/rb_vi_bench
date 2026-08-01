@@ -65,6 +65,7 @@ def tolerance_table(rows: list[dict], dataset: str, delta: float) -> str:
         r["method_label"], r["paper_tag"],
         _fmt(_num(r, "R"), ".0f"),
         _fmt(_num(r, "test_max_rel_err")),
+        _fmt(_num(r, "test_max_rel_err_persnap")),
         _fmt(_num(r, "gram_cond"), ".3g"),
         _fmt(_num(r, "e_orth_mean"), ".3f"),
         _fmt(_num(r, "calls_total"), ".0f"),
@@ -72,10 +73,12 @@ def tolerance_table(rows: list[dict], dataset: str, delta: float) -> str:
     ] for r in sorted(sel, key=lambda r: _num(r, "R"))]
     return _table(
         f"{dataset} -- matched TOLERANCE delta={delta}  (R is the result, not an input)",
-        ["method", "paper", "R", "test_max_err", "gram_cond", "e_orth", "solves", "secs"],
+        ["method", "paper", "R", "test_max_err", "per_snap", "gram_cond", "e_orth",
+         "solves", "secs"],
         body,
-        "lower R at equal error is better; e_orth closer to 1 is a wider cone "
-        "([NDEE22] Eq. 41)",
+        "test_max_err divides by the LARGEST snapshot norm; per_snap divides each "
+        "snapshot by its own -- the quantity ADG's tolerance bounds. They diverge where "
+        "snapshot magnitudes spread.",
     )
 
 
@@ -87,16 +90,19 @@ def cardinality_table(rows: list[dict], dataset: str, R: int) -> str:
         r["method_label"], r["paper_tag"],
         _fmt(_num(r, "train_max_rel_err")),
         _fmt(_num(r, "test_max_rel_err")),
+        _fmt(_num(r, "test_max_rel_err_persnap")),
         _fmt(_num(r, "nn_max_violation"), ".2e"),
         _fmt(_num(r, "gram_cond"), ".3g"),
         _fmt(_num(r, "fit_seconds"), ".3f"),
     ] for r in sorted(sel, key=lambda r: _num(r, "test_max_rel_err"))]
     return _table(
-        f"{dataset} -- matched CARDINALITY R={R}  (the only mode NMF and POD can enter)",
-        ["method", "paper", "train_max", "test_max", "nn_violation", "gram_cond", "secs"],
+        f"{dataset} -- matched CARDINALITY R={R}  (the only mode NMF and the orthant enter)",
+        ["method", "paper", "train_max", "test_max", "test_per_snap", "nn_violation",
+         "gram_cond", "secs"],
         body,
-        "POD is a NEGATIVE CONTROL: its low error is unattainable by a cone, and its "
-        "non-zero nn_violation is the reason ([BEE20] §5)",
+        "test_per_snap divides each snapshot by its OWN norm -- the quantity ADG's "
+        "tolerance bounds -- while test_max divides by the largest. The orthant is a "
+        "reference (widest admissible cone), not a competitor.",
     )
 
 

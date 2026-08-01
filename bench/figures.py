@@ -75,6 +75,13 @@ CONE_PANELS = (
      "aperture (how wide the cone opens)"),
 )
 
+#: Extra split figures, written only by ``--split``. Kept out of ``PANELS`` so the
+#: four-panel layout stays a 2x2 grid.
+EXTRA_SPLIT_PANELS = (
+    ("test_max_rel_err_persnap", "max per-snapshot relative error", "log",
+     "precision, each snapshot vs ITS OWN norm"),
+)
+
 PANELS = (
     ("test_max_rel_err", "max relative projection error", "log", "precision (test set)"),
     ("gram_cond",        "Gram condition number",         "log", "conditioning"),
@@ -229,7 +236,7 @@ def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
     ds_dir = layout.ensure(layout.metrics_dir(out_dir, dataset))
 
     written: list[Path] = []
-    for column, ylabel, yscale, title in PANELS:
+    for column, ylabel, yscale, title in PANELS + EXTRA_SPLIT_PANELS:
         name = column
         if column == "test_max_rel_err":
             column, title = err_col, err_title
@@ -240,6 +247,13 @@ def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
             name = "orthogonality"
         elif column == "calls_total":
             name = "offline_cost"
+        elif column == "test_max_rel_err_persnap":
+            name = "precision_persnap"
+            # Same no-split fallback the shared column gets: physics has no test set, so
+            # its test column is nan throughout and the panel would come out blank.
+            if err_col == "train_max_rel_err":
+                column = "train_max_rel_err_persnap"
+                title += " — train (no split)"
 
         fig, ax = plt.subplots(figsize=(7.0, 4.6))
         plotted = _panel(ax, series, column, ylabel, yscale, title,

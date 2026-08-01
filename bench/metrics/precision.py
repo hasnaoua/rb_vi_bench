@@ -133,34 +133,80 @@ def nonnegativity_violation(snapshots: np.ndarray, generators: np.ndarray,
     }
 
 
+def per_snapshot_rel_errors(errors: np.ndarray, columns: np.ndarray) -> np.ndarray:
+    """``||theta_q - Pi_K(theta_q)|| / ||theta_q||`` -- each snapshot against *itself*.
+
+    The companion to the shared-denominator convention, not a replacement for it. The two
+    answer different questions and the gap between them can be large:
+
+    * **Shared** ``err_q / max_p ||theta_p||`` -- one global yardstick. Comparable across
+      methods and readable against the tolerance that produced it, which is why it is the
+      benchmark's primary column. But a large snapshot sets the yardstick, so a small one
+      can be almost entirely unrepresented and still score well.
+    * **Per-snapshot** ``err_q / ||theta_q||`` -- each snapshot judged on its own scale.
+      Nothing hides behind anything.
+
+    They diverge exactly where snapshot magnitudes spread. On ``physics`` (norms spanning
+    604x) CPG at R=8 reads 0.0117 shared and **0.8137** per-snapshot: one snapshot is 81%
+    unrepresented in its own terms while the headline says 1%.
+
+    This is also the convention **ADG optimizes**. Normalizing to ``S_norm`` makes every
+    snapshot unit-norm, so its ``epsilon`` bounds ``sin theta_K(x_hat) = e_K(x_hat)``
+    per snapshot; CPG and mCPG bound the shared quantity. Reporting only the shared column
+    grades ADG on an objective it is not pursuing -- on ``physics`` that inverts the
+    ranking, from ADG 3.4x worse to ADG 9.4x better.
+
+    Snapshots of zero norm are excluded rather than counted as 0/0. ``Dataset`` drops them
+    at construction, so this should never fire, but the ratio must not invent a value.
+    """
+    err = np.asarray(errors, float)
+    norms = np.linalg.norm(np.asarray(columns, float), axis=0)
+    good = norms > 0.0
+    if not good.any():
+        return np.array([])
+    return err[good] / norms[good]
+
+
 def evaluate(dataset: Dataset, result: BasisResult) -> dict[str, float]:
     """Precision row for one (dataset, method) cell.
 
-    Errors are reported relative to ``max_q ||theta_q||`` -- the same normalizer both
-    relative tolerances use -- so an error column can be read directly against the
-    ``delta`` that produced it.
+    Two normalizations are reported side by side, because they answer different questions
+    and no single one is right for every method (see ``per_snapshot_rel_errors``):
+
+    * ``*_rel_err`` divides by ``max_q ||theta_q||`` -- the same normalizer both relative
+      tolerances use, so it can be read directly against the ``delta`` that produced it.
+    * ``*_rel_err_persnap`` divides each snapshot by its own norm -- the quantity ADG's
+      tolerance actually bounds.
     """
     scale = dataset.scale
     use_cone = uses_cone_projection(result)
     err_fn = projection_errors if use_cone else reconstruction_errors
 
-    train_err = err_fn(dataset.train(), result.generators)
+    train_cols = dataset.train()
+    train_err = err_fn(train_cols, result.generators)
+    train_ps = per_snapshot_rel_errors(train_err, train_cols)
     row: dict[str, float] = {
         "R": float(result.R),
         "train_max_rel_err": float(train_err.max() / scale) if train_err.size else 0.0,
         "train_mean_rel_err": float(train_err.mean() / scale) if train_err.size else 0.0,
+        "train_max_rel_err_persnap": float(train_ps.max()) if train_ps.size else 0.0,
+        "train_mean_rel_err_persnap": float(train_ps.mean()) if train_ps.size else 0.0,
     }
 
     test = dataset.test()
     if test is not None:
         test_err = err_fn(test, result.generators)
+        test_ps = per_snapshot_rel_errors(test_err, test)
         row["test_max_rel_err"] = float(test_err.max() / scale)
         row["test_mean_rel_err"] = float(test_err.mean() / scale)
+        row["test_max_rel_err_persnap"] = float(test_ps.max()) if test_ps.size else 0.0
+        row["test_mean_rel_err_persnap"] = float(test_ps.mean()) if test_ps.size else 0.0
     else:
         # Absent, not zero: ``physics`` has no split by design, and a 0.0 here would
         # read as a perfect generalization result.
-        row["test_max_rel_err"] = float("nan")
-        row["test_mean_rel_err"] = float("nan")
+        for key in ("test_max_rel_err", "test_mean_rel_err",
+                    "test_max_rel_err_persnap", "test_mean_rel_err_persnap"):
+            row[key] = float("nan")
 
     row.update(
         {f"nn_{k}": v
