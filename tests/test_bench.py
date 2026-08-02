@@ -1215,3 +1215,35 @@ def test_fast_datasets_load_and_are_valid(key):
     assert ds.scale > 0.0
     if ds.supports_infsup:
         assert ds.A is not None and ds.B_of_mu(0).ndim == 2
+
+
+def test_matched_r_duplicate_is_excluded_only_from_cardinality_figures():
+    """adg_relchange duplicates adg at matched R, so it must not be drawn there.
+
+    Matched-cardinality mode has no stopping rule -- every method is handed the same R --
+    so the two are literally the same method there, identical in every column across all
+    305 cells. Drawing both puts a duplicate line on top of ``adg`` in exactly the figures
+    that do the fair comparison. On the tolerance axis they genuinely differ, because the
+    stopping rule is what is being measured, so it stays visible there and in every table.
+    """
+    from bench.figures import FIGURE_EXCLUDED, MATCHED_R_DUPLICATES, excluded_for
+
+    assert "adg_relchange" in MATCHED_R_DUPLICATES
+    assert "adg_relchange" not in FIGURE_EXCLUDED
+    assert "adg_relchange" in excluded_for("cardinality")
+    assert "adg_relchange" not in excluded_for("tolerance")
+    # The always-excluded references stay excluded in both modes.
+    for mode in ("cardinality", "tolerance"):
+        assert {"orthant", "pod_control"} <= excluded_for(mode), mode
+
+
+def test_relchange_and_adg_coincide_at_matched_cardinality(bumps):
+    """The premise of the exclusion, asserted rather than assumed."""
+    for R in (2, 5, 9):
+        a = METHODS["adg"].fit(bumps, R=R)
+        b = METHODS["adg_relchange"].fit(bumps, R=R)
+        assert np.allclose(a.generators, b.generators)
+        for row_a, row_b in ((metrics.precision.evaluate(bumps, a),
+                              metrics.precision.evaluate(bumps, b)),):
+            for k in row_a:
+                assert np.isclose(row_a[k], row_b[k], equal_nan=True), (R, k)

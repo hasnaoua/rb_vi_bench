@@ -51,7 +51,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from . import layout
-from .figures import FIGURE_EXCLUDED, STYLE, _num
+from .figures import STYLE, _num, excluded_for
 
 RESULTS = _paths.ROOT / "results"
 
@@ -124,9 +124,11 @@ def _symlog_threshold(values) -> float:
     return max(mags) * 1e-2
 
 
-def _draw(ax, series, xlabel, title, xscale):
+def _draw(ax, series, xlabel, title, xscale, mode="cardinality"):
     everything = []
-    series = {m: v for m, v in series.items() if m not in FIGURE_EXCLUDED}
+    # adg_relchange is a duplicate of adg on the cardinality axis but genuinely distinct
+    # on the tolerance axis, where its stopping rule is what is being measured.
+    series = {m: v for m, v in series.items() if m not in excluded_for(mode)}
     for method, (xs, ys) in series.items():
         if not xs:
             continue
@@ -168,7 +170,8 @@ def figure_vs_cardinality(dataset, rows_by_method, out: Path) -> Path | None:
 
     fig, ax = plt.subplots(figsize=(8.2, 5.0))
     if not _draw(ax, series, "cardinality $R$",
-                 f"{dataset} — marginal decrement per added generator", "linear"):
+                 f"{dataset} — marginal decrement per added generator", "linear",
+                 mode="cardinality"):
         plt.close(fig)
         return None
     ax.legend(fontsize=7.5, ncol=2, frameon=False, loc="best")
@@ -194,7 +197,7 @@ def figure_vs_tolerance(dataset, rows_by_method, out: Path) -> Path | None:
 
     fig, ax = plt.subplots(figsize=(8.2, 5.0))
     if not _draw(ax, series, r"tolerance $\varepsilon$  (tightening $\rightarrow$)",
-                 f"{dataset} — decrement per tolerance step", "log"):
+                 f"{dataset} — decrement per tolerance step", "log", mode="tolerance"):
         plt.close(fig)
         return None
     ax.invert_xaxis()

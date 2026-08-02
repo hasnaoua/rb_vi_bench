@@ -143,21 +143,38 @@ def load_cardinality_rows(path: Path) -> dict[str, dict[str, list[tuple[float, d
     return out
 
 
-#: Methods measured in every table but omitted from every figure.
+#: Measured in every table, never drawn.
 #:
 #: Both are *references*, not competitors, and both sit orders of magnitude away from the
 #: methods being compared -- the orthant because it is the widest admissible cone (90 deg
 #: aperture, near-total excess), POD because its error falls to machine zero past the
 #: numerical rank. Plotting either forces the shared axis to span their range and squeezes
-#: the four curves that matter into a thin band. Their numbers stay in ``grid.csv`` and
+#: the curves that matter into a thin band. Their numbers stay in ``grid.csv`` and
 #: ``report.txt``, where a reader can consult them without paying for them visually.
 FIGURE_EXCLUDED: frozenset[str] = frozenset({"orthant", "pod_control"})
+
+#: Drawn in tolerance-axis figures, omitted from matched-cardinality ones.
+#:
+#: ``adg_relchange`` differs from ``adg`` *only* in when it stops. Matched-cardinality
+#: mode has no stopping rule -- every method is handed the same R -- so there the two are
+#: literally the same method, identical in 305 of 305 cells across every column. Drawing
+#: both puts a duplicate line on top of ``adg`` in exactly the figures that do the fair
+#: comparison. Its contribution is the R it *chooses*, which is a tolerance-mode question
+#: and is visible in the tolerance tables and the tolerance-axis decrement figure.
+MATCHED_R_DUPLICATES: frozenset[str] = frozenset({"adg_relchange"})
+
+
+def excluded_for(mode: str = "cardinality") -> frozenset[str]:
+    """Methods to omit from a figure drawn against ``mode``."""
+    if mode == "cardinality":
+        return FIGURE_EXCLUDED | MATCHED_R_DUPLICATES
+    return FIGURE_EXCLUDED
 
 
 def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False):
     plotted = 0
     primary: list[float] = []
-    series = {m: p for m, p in series.items() if m not in FIGURE_EXCLUDED}
+    series = {m: p for m, p in series.items() if m not in excluded_for("cardinality")}
     for method, points in series.items():
         style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
         xs = [R for R, _ in points]
