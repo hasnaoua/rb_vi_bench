@@ -88,25 +88,75 @@ def _draw(ax, x, truth, approx, title, color, geom=None):
     ax.tick_params(labelsize=7)
 
 
-def _draw_field_triptych(fig, axes, truth, approx, geom, title):
-    """HF | ROM | error, on a shared colour scale -- the publication convention.
+def _draw_axial_overlay(ax, truth, approx, geom, color, label):
+    """HF vs ROM as an axial profile -- ``greedy.viz.publication``'s convention.
 
-    The first two panels share limits so they are visually comparable; the error panel
-    gets its own, since it is typically orders of magnitude smaller and would be a flat
-    field on the shared scale.
+    ``z`` runs up the y-axis and force along x, the angular direction collapsed by its
+    mean. The field is essentially axisymmetric, so this loses nothing and shows the
+    quantity the 2-D maps make you infer: where along the cladding the contact sits and
+    how far the reduced model's front is displaced from the HF one.
+
+    The band marks the active contact span at the same 1e-3 threshold ratio the
+    publication figures use, and the errors quoted are for this profile.
+    """
+    hf = geometry.axial_profile(truth, geom)
+    rom = geometry.axial_profile(approx, geom)
+    z = geometry.axial_coordinate(geom)
+    scale, exponent = geometry.force_scale(float(np.max(np.abs(hf))) if hf.size else 0.0)
+
+    mask = geometry.active_span(hf)
+    if mask.any():
+        ax.axhspan(float(z[mask].min()), float(z[mask].max()),
+                   color="#dbe4f5", alpha=0.55, zorder=0)
+
+    ax.plot(hf / scale, z, color="#7f8c8d", lw=3.0, alpha=0.6, label="HF snapshot",
+            zorder=3)
+    ax.plot(rom / scale, z, color=color, lw=2.0, ls="--", marker="o",
+            markevery=max(1, z.size // 12), ms=3.6, markerfacecolor="white",
+            markeredgewidth=0.9, label=label, zorder=4)
+
+    denom = float(np.linalg.norm(hf)) or 1.0
+    rel = float(np.linalg.norm(hf - rom)) / denom
+    ax.axvline(0.0, color="#27272a", lw=0.8, zorder=2)
+    ax.set_ylim(z[0], z[-1])
+    ax.set_xlim(left=0.0)
+    ax.set_xlabel("Normal force"
+                  + (rf" ($\times 10^{{{exponent}}}$)" if exponent else ""), fontsize=8)
+    ax.set_ylabel(r"$z$ [mm]", fontsize=8)
+    ax.set_title(f"axial profile — rel {rel:.2e}", fontsize=9)
+    ax.grid(True, color="#d8dce0", ls="--", lw=0.6, alpha=0.8)
+    ax.tick_params(labelsize=7)
+    ax.legend(loc="lower right", fontsize=7, frameon=True)
+
+
+def _draw_field_triptych(fig, axes, truth, approx, geom, title, color="#e8760a",
+                         label="reconstruction"):
+    """HF | ROM | error maps, plus the axial-profile superposition.
+
+    The three maps share the first two colour limits so HF and reconstruction are
+    visually comparable; the error panel gets its own, since it is typically orders of
+    magnitude smaller and would be a flat field on the shared scale.
+
+    The fourth panel is the axial profile, in ``greedy.viz.publication``'s layout. The
+    maps and the profile answer different questions: the maps show *where on the surface*
+    the discrepancy sits and confirm the field is axisymmetric; the profile shows how far
+    the reduced model's contact front is displaced along the cladding, which is the
+    quantity the publication figures report and is hard to read off a colour map.
     """
     vmin, vmax = geometry.field_limits([truth, approx], geom)
     err = np.abs(truth - approx)
-    for ax, values, label, lo, hi in (
+    for ax, values, lab, lo, hi in (
         (axes[0], truth, "HF snapshot", vmin, vmax),
         (axes[1], approx, "reconstruction", vmin, vmax),
         (axes[2], err, "|error|", *geometry.field_limits([err], geom)),
     ):
         im = geometry.draw_field(ax, values, geom, vmin=lo, vmax=hi)
-        ax.set_title(label, fontsize=9)
+        ax.set_title(lab, fontsize=9)
         cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
         cb.ax.tick_params(labelsize=6)
     axes[0].set_ylabel(geom.ylabel, fontsize=8)
+    if len(axes) > 3:
+        _draw_axial_overlay(axes[3], truth, approx, geom, color, label)
     fig.suptitle(title, fontsize=10)
 
 
@@ -132,9 +182,13 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
         head = (f"{name} — {METHODS[method_key].label} (R={result.R})\n"
                 f"{label}: snapshot {idx}, rel. err {rel[idx]:.3e}")
         if geom.is_field:
-            fig, axes = plt.subplots(1, 3, figsize=(13.0, 3.4))
-            _draw_field_triptych(fig, axes, columns[:, idx], approx[:, idx], geom, head)
-            fig.tight_layout(rect=(0, 0, 1, 0.88))
+            # A structured grid also gets the axial-profile panel; a scatter geometry
+            # has no axis to collapse along, so it keeps the three maps.
+            n = 4 if geom.kind == "grid" else 3
+            fig, axes = plt.subplots(1, n, figsize=(3.4 * n + 2.0, 3.6))
+            _draw_field_triptych(fig, axes, columns[:, idx], approx[:, idx], geom, head,
+                                 color=color, label=METHODS[method_key].label)
+            fig.tight_layout(rect=(0, 0, 1, 0.87))
         else:
             fig, ax = plt.subplots(figsize=(6.6, 4.0))
             _draw(ax, x, columns[:, idx], approx[:, idx],

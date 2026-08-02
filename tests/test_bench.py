@@ -1386,3 +1386,54 @@ def test_scales_are_logarithmic_wherever_the_data_allows():
                    "test_max_rel_err_persnap"):
         assert scales[column] == "log", (column, scales[column])
     assert scales["excess_mean_err"] == "symlog", "exact zeros cannot go on a log axis"
+
+
+def test_axial_profile_matches_the_publication_reduction():
+    """The z-profile must be greedy.viz.publication's, not a reinvention.
+
+    Its figures collapse theta by the MEAN and plot force against axial z. Pinning this
+    against the repository's own profile_from_snapshot keeps the benchmark's overlay and
+    the publication figures showing the same curve; a max-reduction or a transpose would
+    both produce a plausible but different profile.
+    """
+    from greedy.viz.publication import profile_from_snapshot
+
+    from bench import geometry as g
+
+    ds = ds_mod.load("physics")
+    geom = ds.geometry
+    v = ds.snapshots[:, 0]
+
+    mine = g.axial_profile(v, geom)
+    assert np.allclose(mine, profile_from_snapshot(v, "mean"))
+    assert mine.size == geom.shape[1] == 101, "one value per axial station"
+
+    z = g.axial_coordinate(geom)
+    assert z.size == mine.size
+    assert z[0] == pytest.approx(0.0) and z[-1] == pytest.approx(5.0)
+
+
+def test_active_span_uses_the_publication_threshold():
+    """The shaded band is the same active span the publication figures mark."""
+    from bench import geometry as g
+
+    assert g.ACTIVE_THRESHOLD_RATIO == 1.0e-3
+    ds = ds_mod.load("physics")
+    p = g.axial_profile(ds.snapshots[:, 0], ds.geometry)
+    mask = g.active_span(p)
+    assert mask.any() and not mask.all(), "contact should cover part of the cladding"
+    assert np.all(p[mask] > g.ACTIVE_THRESHOLD_RATIO * p.max())
+
+
+def test_grid_datasets_get_the_axial_panel(tmp_path):
+    """physics gains a fourth panel; a scatter geometry has no axis to collapse."""
+    from bench import reconstruction
+
+    assert reconstruction.main([
+        "--datasets", "physics", "--methods", "adg", "cpg_bee20",
+        "--R", "4", "--split", "--out", str(tmp_path)]) == 0
+    root = tmp_path / "3D_Pellet-Cladding" / "reconstruction"
+    for m in ("adg", "cpg_bee20"):
+        for case in ("best.png", "worst.png"):
+            # Four panels is materially wider than three.
+            assert (root / m / case).stat().st_size > 30000, f"{m}/{case}"

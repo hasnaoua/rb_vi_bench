@@ -114,6 +114,46 @@ def field_limits(panels, geom: FieldGeometry, percentiles=(0.5, 99.7)):
 # The geometries the merged datasets actually have
 # ---------------------------------------------------------------------------
 
+#: Active-contact threshold as a fraction of the profile maximum.
+#: Matches ``greedy.viz.publication``'s ``--active-threshold-ratio`` default, so the
+#: shaded span here is the same span its publication figures show.
+ACTIVE_THRESHOLD_RATIO = 1.0e-3
+
+
+def axial_profile(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
+    """Collapse the angular direction, leaving force as a function of axial ``z``.
+
+    The pellet-cladding field is essentially axisymmetric -- the ``theta`` direction
+    carries almost no information, which the 2-D maps show directly -- so the mean over
+    ``theta`` loses nothing and turns a 76 x 101 surface into the axial profile that
+    ``greedy.viz.publication`` plots. Reduction is the mean, matching its
+    ``profile_from_snapshot(..., "mean")``.
+    """
+    return as_surface(values, geom).mean(axis=0)
+
+
+def axial_coordinate(geom: FieldGeometry) -> np.ndarray:
+    """The ``z`` stations in mm, from the geometry's extent."""
+    n_z = geom.shape[1]
+    z0, z1 = geom.extent[0], geom.extent[1]
+    return np.linspace(z0, z1, n_z)
+
+
+def active_span(profile: np.ndarray,
+                ratio: float = ACTIVE_THRESHOLD_RATIO) -> np.ndarray:
+    """Boolean mask of the axial stations carrying contact."""
+    p = np.abs(np.asarray(profile, float))
+    return p > ratio * (p.max() if p.size else 0.0)
+
+
+def force_scale(max_force: float) -> tuple[float, int | None]:
+    """Power-of-ten factor for the force axis, as the publication figures use."""
+    if not np.isfinite(max_force) or max_force <= 0.0:
+        return 1.0, None
+    exponent = int(np.floor(np.log10(max_force)))
+    return 10.0**exponent, exponent
+
+
 def physics_geometry() -> FieldGeometry:
     """Pellet-cladding quarter sector: 76 angular x 101 axial nodes.
 
