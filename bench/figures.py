@@ -49,8 +49,8 @@ STYLE: dict[str, dict] = {
     "mcpg_greedy": dict(color="#5cc98d", marker="^", ls="--", label="mCPG (greedy.core)"),
     "adg":         dict(color="#e8760a", marker="D", ls="-",  label="ADG (batch normalized)"),
     "adg_raw":     dict(color="#f0b27a", marker="d", ls=":",  label="ADG (un-normalized)"),
-    "adg_relchange": dict(color="#a04000", marker="*", ls="-.",
-                          label="ADG (stop on stagnation)"),
+    "adg_momentum": dict(color="#a04000", marker="*", ls="-.",
+                         label="ADG (momentum stop)"),
     "nmf_s0":      dict(color="#c0392b", marker="v", ls="-",  label="NMF (seed 0)"),
     "nmf_s1":      dict(color="#d98880", marker="v", ls=":",  label="NMF (seed 1)"),
     "nmf_s2":      dict(color="#e6b0aa", marker="v", ls=":",  label="NMF (seed 2)"),
@@ -153,15 +153,15 @@ def load_cardinality_rows(path: Path) -> dict[str, dict[str, list[tuple[float, d
 #: ``report.txt``, where a reader can consult them without paying for them visually.
 FIGURE_EXCLUDED: frozenset[str] = frozenset({"orthant", "pod_control"})
 
-#: Drawn in tolerance-axis figures, omitted from matched-cardinality ones.
+#: Nothing is currently mode-excluded; kept so the distinction stays expressible.
 #:
-#: ``adg_relchange`` differs from ``adg`` *only* in when it stops. Matched-cardinality
-#: mode has no stopping rule -- every method is handed the same R -- so there the two are
-#: literally the same method, identical in 305 of 305 cells across every column. Drawing
-#: both puts a duplicate line on top of ``adg`` in exactly the figures that do the fair
-#: comparison. Its contribution is the R it *chooses*, which is a tolerance-mode question
-#: and is visible in the tolerance tables and the tolerance-axis decrement figure.
-MATCHED_R_DUPLICATES: frozenset[str] = frozenset({"adg_relchange"})
+#: ``adg_momentum`` differs from ``adg`` *only* in when it stops, and matched-cardinality
+#: mode has no stopping rule -- every method is handed the same R -- so on that axis the
+#: two coincide exactly (verified identical in 305 of 305 cells). It is drawn anyway, in
+#: dash-dot over ``adg``'s solid line, so the coincidence is *visible* rather than the
+#: method appearing absent. Where it genuinely differs is the tolerance axis, which is
+#: where its stopping rule is the thing being measured.
+MATCHED_R_DUPLICATES: frozenset[str] = frozenset()
 
 
 def excluded_for(mode: str = "cardinality") -> frozenset[str]:
@@ -230,7 +230,8 @@ def figure_for_dataset(dataset: str, series, out_dir: Path) -> Path:
                bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(f"{dataset} — metrics vs cardinality (matched-R mode)", fontsize=12)
     fig.text(0.5, 0.945,
-             "dotted = train error;  POD is a negative control (unattainable floor)",
+             "dotted = train error;  ADG (momentum stop) overlays ADG exactly here — "
+             "matched-R mode has no stopping rule",
              ha="center", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.93))
 

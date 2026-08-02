@@ -40,10 +40,17 @@ def slug(dataset: str) -> str:
 
     Subsampled datasets carry their cap in the name (``hertz_pressure[n<=200]``), which
     is worth keeping visible -- the numbers do depend on it -- but the brackets and
-    ``<=`` are awkward in a path.
+    ``<=`` are awkward in a path. Dataset names are prose now ("Half-disks of Hertz"),
+    so spaces and parentheses have to be handled too.
     """
-    return (dataset.replace("[", "_").replace("]", "")
-            .replace("<", "").replace("=", "").replace(" ", ""))
+    out = (dataset.replace("[", "_").replace("]", "")
+           .replace("<", "").replace("=", "")
+           .replace("(", "").replace(")", "")
+           .replace(" ", "_").replace("-", "-"))
+    # Collapse the doubled underscores a name like "X (pressure)" would otherwise leave.
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out.strip("_")
 
 
 def dataset_dir(out: Path, dataset: str) -> Path:

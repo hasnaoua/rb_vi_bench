@@ -92,9 +92,9 @@ METHODS: dict[str, Method] = {
             description="ADG with one shared absolute threshold; kept to show its cost",
         ),
         Method(
-            key="adg_relchange",
-            label="ADG (stop on stagnation)",
-            fit=family_b.fit_greedy_adg_relchange,
+            key="adg_momentum",
+            label="ADG (momentum stop)",
+            fit=family_b.fit_greedy_adg_momentum,
             family="greedy.core",
             paper_tag="",
             description=("ADG stopped when |e(p)-e(p-1)|/e(p-1) <= eps, i.e. when a "
@@ -201,7 +201,7 @@ DEFAULT_METHODS: tuple[str, ...] = (
     "cpg_bee20",
     "mcpg_ndee22",
     "adg",
-    "adg_relchange",
+    "adg_momentum",
     "nmf_s0",
     "orthant",
 )

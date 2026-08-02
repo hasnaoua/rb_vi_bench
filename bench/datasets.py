@@ -3,18 +3,25 @@
 The eight sources differ in exactly the ways that matter for this benchmark, and the
 differences are the reason for running all of them rather than picking one:
 
-============== ======== =========================== ==============================
-source         dim x n  constraint operator ``B``   why it is here
-============== ======== =========================== ==============================
-toy_bee20      60 x 40  ``B = I``, param-INdependent [BEE20]'s own test problem
-obstacle_ndee22 40 x 25 ``B(mu)``, param-DEPENDENT   the one feature [NDEE22] turns on
-hertz_pressure 128 x 4k ``B = I`` (Schur form)       validated physics, 4000 samples
-gaussian_synth 200 x n  none                         controlled rank, cheap sweeps
-fem_lambda     57 x 50  none (snapshots only)        real FEM multipliers + paper grid
-physics        7676x96  none (snapshots only)        high dimension, cost scaling
-membrane_2d    varies   ``B`` fixed geometry         2-D, [NDEE22] §5.1 analogue
-hertz_2d       varies   ``B(mu)`` moving contact     2-D elasticity, [NDEE22] §5.2 analogue
-============== ======== =========================== ==============================
+=================== ======================== ======== ================================
+key (``--datasets``) reported name             dim x n  why it is here
+=================== ======================== ======== ================================
+toy_bee20           toy_bee20                60 x 40  [BEE20]'s own test problem, B = I
+obstacle_ndee22     obstacle_ndee22          40 x 25  the only parameter-dependent B(mu)
+hertz_pressure      hertz_pressure           128 x 4k validated physics, 4000 samples
+gaussian_synth      gaussian_synth           200 x n  controlled rank, cheap sweeps
+fem_lambda          Half-disks of Hertz       57 x 50 [BEE20] §6.2, real FEM multipliers
+fem_lambda_pressure Half-disks of Hertz (p.)  57 x 50 same, half-support corrected
+physics             3D Pellet-Cladding       7676x96  76x101 quarter sector, dimension
+membrane_2d         membrane_2d              varies   2-D, [NDEE22] §5.1 analogue
+hertz_2d            hertz_2d                 varies   2-D elasticity, §5.2 analogue
+=================== ======================== ======== ================================
+
+**Keys versus names.** The registry key is the CLI handle and never changes; the
+``Dataset.name`` is what appears in ``grid.csv``, figure titles and directory names.
+Where a source *is* a recognised physical problem, the name says so -- ``fem_lambda`` is
+[BEE20] §6.2's Hertz half-disks and ``physics`` is the 3-D pellet-cladding contact --
+because a reader of a figure should see the problem, not the file it came from.
 
 **Tiers.** ``fast`` sources need only numpy/scipy and are the default grid. ``heavy``
 ones are the two 2-D FEM models, and they are opt-in for a dependency reason rather than
@@ -213,7 +220,7 @@ def _fem_lambda() -> Dataset:
     snapshots, radii, _src = load_lambda_dataset(Path(npz))
     train_idx, test_idx = fem_sols_train_test_split(radii)
     return Dataset(
-        name="fem_lambda",
+        name="Half-disks of Hertz",
         snapshots=np.ascontiguousarray(snapshots.T),          # (n, dim) -> (dim, n)
         description="[BEE20] §6.2 half-disk contact, 57 nodes from the symmetry axis out",
         paper="greedy_algos / FEM_SOLS",
@@ -254,7 +261,7 @@ def _fem_lambda_pressure() -> Dataset:
     S = base.snapshots.copy()
     S[0, :] *= 2.0
     return Dataset(
-        name="fem_lambda_pressure",
+        name="Half-disks of Hertz (pressure)",
         snapshots=S,
         description="[BEE20] §6.2 half-disk, nodal forces converted to pressure",
         paper="greedy_algos / FEM_SOLS",
@@ -316,7 +323,7 @@ def _physics() -> Dataset:
     d = np.load(npz, allow_pickle=False)
     S = np.ascontiguousarray(np.asarray(d["snapshots"], float).T)
     return Dataset(
-        name="physics",
+        name="3D Pellet-Cladding",
         snapshots=S,
         description="pellet-cladding contact, 76x101 quarter sector (no split, by design)",
         paper="greedy_algos / physics_data",
@@ -406,11 +413,11 @@ DATASETS: dict[str, DatasetSpec] = {
                     "validated physics, 4000 samples"),
         DatasetSpec("gaussian_synth", "Gaussian bumps", _gaussian_synth, "fast",
                     "known generating rank"),
-        DatasetSpec("fem_lambda", "FEM_SOLS nodal forces", _fem_lambda, "fast",
+        DatasetSpec("fem_lambda", "Half-disks of Hertz", _fem_lambda, "fast",
                     "[BEE20] §6.2 half-disk, as stored"),
-        DatasetSpec("fem_lambda_pressure", "FEM_SOLS pressure", _fem_lambda_pressure,
+        DatasetSpec("fem_lambda_pressure", "Half-disks of Hertz (pressure)", _fem_lambda_pressure,
                     "fast", "same, symmetry-node half-support corrected"),
-        DatasetSpec("physics", "Physics contact forces", _physics, "fast",
+        DatasetSpec("physics", "3D Pellet-Cladding", _physics, "fast",
                     "7676 dofs; dimension scaling"),
         DatasetSpec("membrane_2d", "2-D membrane", _membrane_2d, "heavy",
                     "497 dual dofs; needs cvxopt"),

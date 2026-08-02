@@ -308,6 +308,6 @@ def fit_greedy_adg_with_criterion(dataset, *, delta=None, R=None,
     )
 
 
-def fit_greedy_adg_relchange(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_greedy_adg_momentum(dataset, *, delta=None, R=None) -> BasisResult:
     return fit_greedy_adg_with_criterion(dataset, delta=delta, R=R,
                                          criterion="relative_change")

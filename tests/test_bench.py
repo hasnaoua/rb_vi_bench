@@ -606,6 +606,7 @@ def test_zero_snapshots_are_dropped_before_any_algorithm_runs(bumps):
 
     physics = ds_mod.load("physics")
     assert physics.n_dropped_zero == 2, "physics' two zero snapshots should be gone"
+    assert physics.name == "3D Pellet-Cladding"
 
 
 def test_reconstruction_ranking_still_guards_undefined_ratios(bumps):
@@ -685,7 +686,7 @@ def test_default_methods_are_one_canonical_version_per_algorithm():
     from bench.adapters import DEFAULT_METHODS
 
     assert set(DEFAULT_METHODS) <= set(METHODS)
-    assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "adg_relchange",
+    assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "adg_momentum",
                                "nmf_s0", "orthant")
     # POD is deliberately out: it is not a dual basis at all ([BEE20] §5), so scoring it
     # beside methods bound by lambda >= 0 compares different problems. Still registered
@@ -700,7 +701,7 @@ def test_default_methods_are_one_canonical_version_per_algorithm():
                 if k.startswith(prefix) and not (prefix == "cpg_" and k.startswith("mcpg_")))
         assert n == expected, f"{prefix}: {n} in the default set"
     # Both ADG entries must be the normalized form; only the stopping rule differs.
-    assert {"adg", "adg_relchange"} <= set(DEFAULT_METHODS)
+    assert {"adg", "adg_momentum"} <= set(DEFAULT_METHODS)
 
     # ADG must be the normalized form, never the non-standard one.
     assert "adg_raw" not in DEFAULT_METHODS
@@ -775,7 +776,7 @@ def test_reconstruction_renders_fields_for_grid_datasets(tmp_path):
         "--R", "4", "--split", "--out", str(tmp_path),
     ])
     assert rc == 0
-    root = tmp_path / "physics" / "reconstruction"
+    root = tmp_path / "3D_Pellet-Cladding" / "reconstruction"
     assert (root / "all_methods.png").stat().st_size > 5000
     for m in ("cpg_bee20", "mcpg_ndee22"):
         for case in ("best.png", "worst.png"):
@@ -1096,7 +1097,7 @@ def test_adg_stagnation_criterion_cuts_where_the_history_says(bumps):
     """
     from greedy.core.angle_defect_greedy import AngularDefectGreedy
 
-    from bench.adapters.family_b import fit_greedy_adg_relchange
+    from bench.adapters.family_b import fit_greedy_adg_momentum
 
     rows = np.ascontiguousarray(bumps.train().T)
     ref = AngularDefectGreedy(snapshots=rows, epsilon=1e-12, normalize_snapshots=True)
@@ -1109,7 +1110,7 @@ def test_adg_stagnation_criterion_cuts_where_the_history_says(bumps):
             (p for p in range(1, len(hist))
              if hist[p - 1] <= 0 or abs(hist[p] - hist[p - 1]) / hist[p - 1] <= eps),
             len(hist) - 1)
-        got = fit_greedy_adg_relchange(bumps, delta=eps)
+        got = fit_greedy_adg_momentum(bumps, delta=eps)
         assert got.R == sizes[expected_p], (eps, got.R, sizes[expected_p])
 
 
@@ -1127,7 +1128,7 @@ def test_adg_stagnation_truncates_at_a_batch_boundary(bumps):
     boundaries = set(int(s) for s in ref.residual_basis_sizes)
 
     for eps in (0.5, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01):
-        r = METHODS["adg_relchange"].fit(bumps, delta=eps)
+        r = METHODS["adg_momentum"].fit(bumps, delta=eps)
         assert r.R in boundaries, f"eps={eps}: R={r.R} is not a batch boundary"
         # And the cone must be a prefix of the exhaustive one: nested by construction.
         assert r.generators.shape[1] == r.R
@@ -1137,7 +1138,7 @@ def test_adg_stagnation_matches_plain_adg_at_matched_cardinality(bumps):
     """Matched-R mode has no stopping rule, so the two must coincide exactly."""
     for R in (3, 6, 10):
         a = METHODS["adg"].fit(bumps, R=R)
-        b = METHODS["adg_relchange"].fit(bumps, R=R)
+        b = METHODS["adg_momentum"].fit(bumps, R=R)
         assert b.R == a.R == R
         assert np.allclose(a.generators, b.generators)
         assert b.method == "adg_relative_change"
@@ -1217,33 +1218,64 @@ def test_fast_datasets_load_and_are_valid(key):
         assert ds.A is not None and ds.B_of_mu(0).ndim == 2
 
 
-def test_matched_r_duplicate_is_excluded_only_from_cardinality_figures():
-    """adg_relchange duplicates adg at matched R, so it must not be drawn there.
+def test_nothing_is_currently_mode_excluded_beyond_the_references():
+    """The mode-aware hook stays, but only the two references use it.
 
-    Matched-cardinality mode has no stopping rule -- every method is handed the same R --
-    so the two are literally the same method there, identical in every column across all
-    305 cells. Drawing both puts a duplicate line on top of ``adg`` in exactly the figures
-    that do the fair comparison. On the tolerance axis they genuinely differ, because the
-    stopping rule is what is being measured, so it stays visible there and in every table.
+    adg_momentum was excluded from cardinality figures for one commit and that made it
+    look absent. It is drawn everywhere now; the hook is kept because the distinction
+    between "a reference" and "a duplicate on this axis" is still worth expressing.
     """
     from bench.figures import FIGURE_EXCLUDED, MATCHED_R_DUPLICATES, excluded_for
 
-    assert "adg_relchange" in MATCHED_R_DUPLICATES
-    assert "adg_relchange" not in FIGURE_EXCLUDED
-    assert "adg_relchange" in excluded_for("cardinality")
-    assert "adg_relchange" not in excluded_for("tolerance")
-    # The always-excluded references stay excluded in both modes.
+    assert MATCHED_R_DUPLICATES == frozenset()
+    assert FIGURE_EXCLUDED == frozenset({"orthant", "pod_control"})
     for mode in ("cardinality", "tolerance"):
-        assert {"orthant", "pod_control"} <= excluded_for(mode), mode
+        assert excluded_for(mode) == FIGURE_EXCLUDED, mode
 
 
-def test_relchange_and_adg_coincide_at_matched_cardinality(bumps):
+def test_momentum_and_adg_coincide_at_matched_cardinality(bumps):
     """The premise of the exclusion, asserted rather than assumed."""
     for R in (2, 5, 9):
         a = METHODS["adg"].fit(bumps, R=R)
-        b = METHODS["adg_relchange"].fit(bumps, R=R)
+        b = METHODS["adg_momentum"].fit(bumps, R=R)
         assert np.allclose(a.generators, b.generators)
         for row_a, row_b in ((metrics.precision.evaluate(bumps, a),
                               metrics.precision.evaluate(bumps, b)),):
             for k in row_a:
                 assert np.isclose(row_a[k], row_b[k], equal_nan=True), (R, k)
+
+
+def test_datasets_are_named_for_the_problem_they_solve():
+    """Reported names say what the physics is; CLI keys stay stable.
+
+    A reader of a figure should see the problem, not the file it came from. The registry
+    key is the handle for --datasets and must not move, or every saved command breaks.
+    """
+    from bench import layout
+
+    expected = {
+        "fem_lambda": "Half-disks of Hertz",
+        "fem_lambda_pressure": "Half-disks of Hertz (pressure)",
+        "physics": "3D Pellet-Cladding",
+    }
+    for key, name in expected.items():
+        assert key in ds_mod.DATASETS, f"{key} key must stay stable"
+        assert ds_mod.load(key).name == name
+        # And the prose name must still produce a usable directory.
+        slug = layout.slug(name)
+        assert " " not in slug and "(" not in slug and "__" not in slug, slug
+        assert slug
+
+
+def test_adg_momentum_is_drawn_in_every_figure():
+    """It must not silently vanish from the figures the way the earlier exclusion did.
+
+    At matched cardinality it coincides with ``adg`` exactly -- there is no stopping rule
+    in that mode -- so it overlays rather than adds information. It is drawn anyway, in
+    dash-dot, so the coincidence is visible instead of the method appearing absent.
+    """
+    from bench.figures import STYLE, excluded_for
+
+    for mode in ("cardinality", "tolerance"):
+        assert "adg_momentum" not in excluded_for(mode), mode
+    assert STYLE["adg_momentum"]["ls"] == "-.", "must be distinguishable where it overlays"
