@@ -16,10 +16,18 @@ Four panels per dataset, one line per method:
 * **offline cost** -- total constrained-solver calls, log scale. Machine-independent,
   unlike wall-clock.
 
-The ``orthant`` and ``pod_control`` references are **measured but not drawn** -- see
-``FIGURE_EXCLUDED``. Both sit orders of magnitude from the methods under comparison and
-plotting them costs the shared axis its resolution. Their values remain in ``grid.csv``
-and ``report.txt``.
+The ``orthant`` and ``pod_control`` references are kept off the *comparison* axes -- see
+``FIGURE_EXCLUDED`` -- because they sit orders of magnitude from the methods being
+compared and would cost the shared axis its resolution. They are not hidden: they get
+their own figure per dataset (``reference_orthant.png``, and one panel per metric under
+``<dataset>/orthant/`` with ``--split``) carrying every panel the comparison figures do.
+Alone on their own axes there is no shared range to protect.
+
+**Scales are logarithmic wherever the data permits it.** Every panel here is strictly
+positive -- errors, condition numbers, ``e_orth`` in (0,1], apertures in (0,90], solver
+counts -- so all are log. Only ``excess`` uses symlog, because it is *exactly* zero for
+any method whose generators are snapshots and a log axis would drop those series
+entirely; the decrement figures do the same, since they can also go negative.
 """
 
 from __future__ import annotations
@@ -65,7 +73,8 @@ STYLE: dict[str, dict] = {
 #: missing most of it. ``excess`` uses a LINEAR axis on purpose -- it is exactly zero for
 #: any method whose generators are snapshots, and a log axis would drop those series
 #: entirely, making "contains no excess" indistinguishable from "not measured". symlog
-#: gives the decades where they matter while keeping an exact zero on the axis.
+#: gives the decades where they matter while keeping an exact zero on the axis. Every
+#: other panel is strictly positive and therefore plain log.
 CONE_PANELS = (
     ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "log",
      "how much of the full cone is MISSED (too small)"),
@@ -73,7 +82,7 @@ CONE_PANELS = (
      "how much of the cone lies OUTSIDE (too large)"),
     ("cone_hausdorff",    "two-sided distance",                "log",
      r"$\max$(missed, excess) — 0 iff the cones coincide"),
-    ("aperture_mean_deg", "mean pairwise angle [deg]",         "linear",
+    ("aperture_mean_deg", "mean pairwise angle [deg]",         "log",
      "aperture (how wide the cone opens)"),
 )
 
@@ -87,7 +96,7 @@ EXTRA_SPLIT_PANELS = (
 PANELS = (
     ("test_max_rel_err", "max relative projection error", "log", "precision (test set)"),
     ("gram_cond",        "Gram condition number",         "log", "conditioning"),
-    ("e_orth_mean",      "mean $e_{orth}$",               "linear", "orthogonality (Eq. 41)"),
+    ("e_orth_mean",      "mean $e_{orth}$",               "log", "orthogonality (Eq. 41)"),
     ("calls_total",      "constrained solver calls",      "log", "offline cost"),
 )
 
@@ -171,10 +180,20 @@ def excluded_for(mode: str = "cardinality") -> frozenset[str]:
     return FIGURE_EXCLUDED
 
 
-def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False):
+def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
+           only=None):
+    """Draw one metric panel.
+
+    ``only`` restricts to an explicit method set, bypassing the usual exclusion. That is
+    how the reference methods get their own figure: on a shared axis their range swamps
+    everything, but alone they are perfectly readable.
+    """
     plotted = 0
     primary: list[float] = []
-    series = {m: p for m, p in series.items() if m not in excluded_for("cardinality")}
+    if only is not None:
+        series = {m: p for m, p in series.items() if m in only}
+    else:
+        series = {m: p for m, p in series.items() if m not in excluded_for("cardinality")}
     for method, points in series.items():
         style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
         xs = [R for R, _ in points]
@@ -322,6 +341,80 @@ def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
     return path
 
 
+def figure_reference(dataset: str, series, out_dir: Path) -> Path | None:
+    """The reference methods on their own axes -- every metric, one figure.
+
+    ``FIGURE_EXCLUDED`` keeps the orthant out of the comparison figures because its range
+    swamps the shared axis: it is the widest admissible cone, so its aperture is pinned at
+    90 degrees and its excess near-total, and a shared y-range spanning that leaves the
+    four real curves in a thin band. Excluding it, though, meant its *evolution* in R was
+    only readable as CSV columns.
+
+    Alone on its own axes there is no such conflict, so this draws every panel the
+    comparison figures carry -- the four metric panels and the four cone-geometry ones --
+    for the references only. Same columns, same scales, no shared range to protect.
+    """
+    ref = {m: p for m, p in series.items() if m in FIGURE_EXCLUDED}
+    if not any(ref.values()):
+        return None
+
+    err_col, err_title = error_column(series)
+    panels = list(PANELS + CONE_PANELS)
+    fig, axes = plt.subplots(4, 2, figsize=(11.5, 15.0))
+    drawn = 0
+    for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), panels):
+        if column == "test_max_rel_err":
+            column, title = err_col, err_title
+        drawn += _panel(ax, ref, column, ylabel, yscale, title, only=set(ref))
+    if not drawn:
+        plt.close(fig)
+        return None
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=9, frameon=False,
+               bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle(
+        f"{dataset} — reference baselines, every metric vs cardinality\n"
+        r"orthant = $span_+$ of canonical directions along mCPG's iteration;"
+        r" at $R=\dim$ it is all of $W^+$",
+        fontsize=11)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "reference_orthant.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def figures_reference_split(dataset: str, series, out_dir: Path) -> list[Path]:
+    """One standalone PNG per metric for the references, under ``<dataset>/orthant/``."""
+    ref = {m: p for m, p in series.items() if m in FIGURE_EXCLUDED}
+    if not any(ref.values()):
+        return []
+    err_col, err_title = error_column(series)
+    out = layout.ensure(layout.dataset_dir(out_dir, dataset) / "orthant")
+    names = {"test_max_rel_err": "precision", "gram_cond": "conditioning",
+             "e_orth_mean": "orthogonality", "calls_total": "offline_cost",
+             "cover_mean_err": "cone_missed", "excess_mean_err": "cone_excess",
+             "cone_hausdorff": "cone_two_sided", "aperture_mean_deg": "aperture"}
+    written: list[Path] = []
+    for column, ylabel, yscale, title in PANELS + CONE_PANELS:
+        name = names[column]
+        if column == "test_max_rel_err":
+            column, title = err_col, err_title
+        fig, ax = plt.subplots(figsize=(7.0, 4.6))
+        if not _panel(ax, ref, column, ylabel, yscale, title, only=set(ref)):
+            plt.close(fig)
+            continue
+        ax.set_title(f"{dataset} — {title}", fontsize=11)
+        ax.legend(fontsize=8, frameon=False, loc="best")
+        fig.tight_layout()
+        path = out / f"{name}.png"
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        written.append(path)
+    return written
+
+
 def figure_precision_overview(all_series, out_dir: Path) -> Path:
     """One precision panel per dataset -- the cross-dataset summary."""
     names = sorted(all_series)
@@ -377,11 +470,13 @@ def main(argv=None) -> int:
     for dataset in sorted(all_series):
         if not args.no_panel:
             written.append(figure_for_dataset(dataset, all_series[dataset], out_dir))
-            cone = figure_cone_geometry(dataset, all_series[dataset], out_dir)
-            if cone:
-                written.append(cone)
+            for extra in (figure_cone_geometry(dataset, all_series[dataset], out_dir),
+                          figure_reference(dataset, all_series[dataset], out_dir)):
+                if extra:
+                    written.append(extra)
         if args.split:
             written.extend(figures_split(dataset, all_series[dataset], out_dir))
+            written.extend(figures_reference_split(dataset, all_series[dataset], out_dir))
     if not args.no_panel:
         written.append(figure_precision_overview(all_series, out_dir))
 

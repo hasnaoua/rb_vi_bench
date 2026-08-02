@@ -1340,3 +1340,49 @@ def test_pressure_correction_lifts_the_centre_onto_the_peak():
     assert 0.45 < r_raw.mean() < 0.55, r_raw.mean()
     assert r_press.mean() > 0.95, r_press.mean()
     assert r_press.min() > 0.9, "corrected centre should never fall far below the peak"
+
+
+def test_reference_baseline_gets_its_own_figure(tmp_path, bumps):
+    """The orthant is kept off the comparison axes but must still be plottable.
+
+    Excluding it from the shared figures protected their y-ranges, but left its evolution
+    in R readable only as CSV columns. On its own axes there is no range to protect, so it
+    gets every panel the comparison figures carry.
+    """
+    from bench import figures
+    from bench.runner import _write_csv, run_cell
+
+    rows = []
+    for R in (2, 4, 6):
+        for m in ("cpg_ndee22", "adg", "orthant"):
+            rows.append(run_cell(bumps, m, R=R, with_infsup=False, with_determinism=False))
+    _write_csv(tmp_path / "grid.csv", rows)
+
+    out = tmp_path / "figs"
+    assert figures.main(["--results", str(tmp_path), "--out", str(out), "--split"]) == 0
+
+    ref = out / "bumps" / "reference_orthant.png"
+    assert ref.stat().st_size > 5000, "reference figure missing or empty"
+    names = sorted(p.stem for p in (out / "bumps" / "orthant").glob("*.png"))
+    assert names == ["aperture", "conditioning", "cone_excess", "cone_missed",
+                     "cone_two_sided", "offline_cost", "orthogonality", "precision"], names
+    # And it must still be absent from the shared comparison panel.
+    assert "orthant" in figures.FIGURE_EXCLUDED
+
+
+def test_scales_are_logarithmic_wherever_the_data_allows():
+    """Log where values are strictly positive; symlog only where zeros/negatives occur.
+
+    e_orth lies in (0, 1] and aperture in (0, 90] -- both strictly positive, so both are
+    log. excess is exactly 0 for any method whose generators are snapshots, and the
+    decrement can go negative, so those two stay symlog: a plain log axis would silently
+    drop precisely the points worth seeing.
+    """
+    from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
+
+    scales = {c: sc for c, _y, sc, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS}
+    for column in ("test_max_rel_err", "gram_cond", "e_orth_mean", "calls_total",
+                   "cover_mean_err", "cone_hausdorff", "aperture_mean_deg",
+                   "test_max_rel_err_persnap"):
+        assert scales[column] == "log", (column, scales[column])
+    assert scales["excess_mean_err"] == "symlog", "exact zeros cannot go on a log axis"
