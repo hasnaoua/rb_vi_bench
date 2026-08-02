@@ -49,10 +49,17 @@ class FieldGeometry:
         return self.kind in ("grid", "scatter")
 
 
-def scale(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
-    """Apply the geometry's colour scaling."""
+def scale(values: np.ndarray, geom: FieldGeometry, log: bool | None = None) -> np.ndarray:
+    """Apply the geometry's colour scaling.
+
+    ``log`` overrides the geometry's own flag. Needed for the relative-error panel: the
+    ``log10(1+|v|)`` compression exists because raw contact pressures span decades, but a
+    relative error already lives in [0, 1] and that transform would squash it into the
+    bottom of the colour range.
+    """
     v = np.asarray(values, float)
-    return np.log10(1.0 + np.abs(v)) if geom.log else v
+    use_log = geom.log if log is None else log
+    return np.log10(1.0 + np.abs(v)) if use_log else v
 
 
 def as_surface(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
@@ -73,15 +80,15 @@ def as_surface(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
 
 
 def draw_field(ax, values: np.ndarray, geom: FieldGeometry, *,
-               vmin=None, vmax=None, cmap="viridis"):
+               vmin=None, vmax=None, cmap="viridis", log: bool | None = None):
     """Render one snapshot (or error field) and return the mappable."""
     if geom.kind == "grid":
-        surf = scale(as_surface(values, geom), geom)
+        surf = scale(as_surface(values, geom), geom, log)
         im = ax.imshow(surf, origin="lower", aspect="auto", extent=geom.extent,
                        vmin=vmin, vmax=vmax, cmap=cmap, interpolation="nearest")
     elif geom.kind == "scatter":
         xy = np.asarray(geom.coords, float)
-        im = ax.tripcolor(xy[:, 0], xy[:, 1], scale(values, geom),
+        im = ax.tripcolor(xy[:, 0], xy[:, 1], scale(values, geom, log),
                           shading="gouraud", vmin=vmin, vmax=vmax, cmap=cmap)
         ax.set_aspect("equal")
     else:
@@ -92,13 +99,33 @@ def draw_field(ax, values: np.ndarray, geom: FieldGeometry, *,
     return im
 
 
-def field_limits(panels, geom: FieldGeometry, percentiles=(0.5, 99.7)):
+def relative_error_field(truth: np.ndarray, approx: np.ndarray) -> np.ndarray:
+    """``|theta - Pi_K(theta)| / max|theta|`` -- error as a fraction of the HF peak.
+
+    Pointwise ``|d_i| / |theta_i|`` would be the other reading of "relative", and it is
+    **unusable over most of this field**. Where contact has not been established the
+    pellet-cladding multiplier is numerically zero -- 5928 of 7676 entries below 1e-6 of
+    the peak, reaching 5e-16 -- so the pointwise ratio divides by noise and explodes
+    precisely where the ROM's spurious contact appears, drowning the real failure in a
+    map of numerical dust.
+
+    Normalizing by the snapshot's own peak is finite everywhere, bounded by construction,
+    and comparable across snapshots -- which absolute error was not, and which matters
+    here because the best and worst panels are *different* snapshots.
+    """
+    t = np.asarray(truth, float)
+    peak = float(np.abs(t).max())
+    return np.abs(t - np.asarray(approx, float)) / (peak if peak > 0 else 1.0)
+
+
+def field_limits(panels, geom: FieldGeometry, percentiles=(0.5, 99.7), log=None):
     """Robust shared colour limits, as the publication pipeline uses.
 
     Percentile-clipped rather than min/max: a single saturated node would otherwise set
     the scale and flatten the whole field.
     """
-    stacked = np.concatenate([np.asarray(scale(p, geom), float).ravel() for p in panels])
+    stacked = np.concatenate([np.asarray(scale(p, geom, log), float).ravel()
+                              for p in panels])
     stacked = stacked[np.isfinite(stacked)]
     if stacked.size == 0:
         return None, None

@@ -1437,3 +1437,66 @@ def test_grid_datasets_get_the_axial_panel(tmp_path):
         for case in ("best.png", "worst.png"):
             # Four panels is materially wider than three.
             assert (root / m / case).stat().st_size > 30000, f"{m}/{case}"
+
+
+def test_error_panels_are_relative_not_absolute():
+    """The error map is normalized by the snapshot's own peak.
+
+    Absolute error cannot be compared across snapshots, and the best and worst panels are
+    by construction *different* snapshots -- so an absolute colour scale shared between
+    them is misleading. Normalizing by each snapshot's peak makes the two rows comparable
+    and puts the colour bar in readable units.
+    """
+    from bench import geometry as g
+
+    truth = np.array([0.0, 2.0, 8.0, 4.0])
+    approx = np.array([0.0, 2.4, 8.0, 3.2])
+    rel = g.relative_error_field(truth, approx)
+    assert np.allclose(rel, np.abs(truth - approx) / 8.0)
+    assert rel.max() <= 1.0
+    # Scale-invariant: a snapshot ten times larger with ten times the error scores equally.
+    assert np.allclose(rel, g.relative_error_field(10 * truth, 10 * approx))
+
+
+def test_relative_error_survives_the_numerically_zero_inactive_zone():
+    """Pointwise |d|/|theta| would divide by noise over most of the field.
+
+    Where contact is not established the multiplier is numerically zero -- most entries
+    below 1e-6 of the peak, reaching 5e-16 -- so a pointwise ratio explodes exactly where
+    the ROM's spurious contact appears, drowning the real failure. The peak-normalized
+    form stays finite and bounded.
+    """
+    from bench import geometry as g
+
+    ds = ds_mod.load("physics")
+    truth = ds.snapshots[:, 0]
+    peak = np.abs(truth).max()
+    tiny = np.abs(truth) < 1e-6 * peak
+    assert tiny.sum() > truth.size // 2, "large numerically-zero region expected"
+    assert np.abs(truth)[tiny].min() < 1e-12 * peak, "and it reaches the noise floor"
+
+    # A real reconstruction, not a uniform rescaling: a ROM's error is additive and
+    # lands in the inactive zone, which is the case that breaks the pointwise ratio.
+    from bench.metrics.precision import reconstruct
+    approx = reconstruct(truth[:, None], METHODS["adg"].fit(ds, R=6).generators)[:, 0]
+
+    rel = g.relative_error_field(truth, approx)
+    assert np.all(np.isfinite(rel)) and rel.max() <= 1.0
+    pointwise = np.abs(truth - approx) / np.maximum(np.abs(truth), 1e-300)
+    assert pointwise.max() / rel.max() > 1e3, "pointwise is the ill-conditioned one"
+
+
+def test_relative_error_panel_is_not_log_compressed():
+    """The log10(1+|v|) transform is for raw pressures, not for a ratio in [0, 1].
+
+    Applying it to a relative error would squash the whole panel into the bottom of the
+    colour range and make the map unreadable.
+    """
+    from bench import geometry as g
+
+    ds = ds_mod.load("physics")
+    geom = ds.geometry
+    assert geom.log, "raw pressures do use the log transform"
+    rel = np.linspace(0.0, 0.5, geom.shape[0] * geom.shape[1])
+    assert np.allclose(g.scale(rel, geom, log=False), rel), "override must bypass log"
+    assert not np.allclose(g.scale(rel, geom), rel), "geometry default is still log"

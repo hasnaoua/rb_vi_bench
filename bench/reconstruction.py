@@ -144,13 +144,14 @@ def _draw_field_triptych(fig, axes, truth, approx, geom, title, color="#e8760a",
     quantity the publication figures report and is hard to read off a colour map.
     """
     vmin, vmax = geometry.field_limits([truth, approx], geom)
-    err = np.abs(truth - approx)
-    for ax, values, lab, lo, hi in (
-        (axes[0], truth, "HF snapshot", vmin, vmax),
-        (axes[1], approx, "reconstruction", vmin, vmax),
-        (axes[2], err, "|error|", *geometry.field_limits([err], geom)),
+    rel = geometry.relative_error_field(truth, approx)
+    rlo, rhi = geometry.field_limits([rel], geom, log=False)
+    for ax, values, lab, lo, hi, lg in (
+        (axes[0], truth, "HF snapshot", vmin, vmax, None),
+        (axes[1], approx, "reconstruction", vmin, vmax, None),
+        (axes[2], rel, "relative error (/ HF peak)", rlo, rhi, False),
     ):
-        im = geometry.draw_field(ax, values, geom, vmin=lo, vmax=hi)
+        im = geometry.draw_field(ax, values, geom, vmin=lo, vmax=hi, log=lg)
         ax.set_title(lab, fontsize=9)
         cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
         cb.ax.tick_params(labelsize=6)
@@ -204,13 +205,17 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
 
 
 def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> Path | None:
-    """Field version: rows are methods, columns are the best and worst |error| fields.
+    """Field version: rows are methods, columns are the best and worst error fields.
 
     Error fields rather than reconstructions, on **one shared colour scale** across every
     method, because that is what makes the panels comparable -- each method's own
     reconstruction looks near-identical to the HF snapshot at this scale, and the
     difference is the whole content. The HF snapshot itself is drawn once on the top row
     for reference.
+
+    The error is **relative**, normalized by each snapshot's own peak, so a row can be
+    compared against another row whose snapshot has a different magnitude. An absolute
+    field could not: the best and worst cases are different snapshots.
     """
     keys = list(fitted)
     errs: dict[str, tuple[int, int, np.ndarray, np.ndarray]] = {}
@@ -219,12 +224,14 @@ def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> 
         if np.all(np.isnan(rel)):
             continue
         b, w = int(np.nanargmin(rel)), int(np.nanargmax(rel))
-        errs[key] = (b, w, np.abs(columns[:, b] - approx[:, b]),
-                     np.abs(columns[:, w] - approx[:, w]))
+        errs[key] = (b, w,
+                     geometry.relative_error_field(columns[:, b], approx[:, b]),
+                     geometry.relative_error_field(columns[:, w], approx[:, w]))
     if not errs:
         return None
 
-    lo, hi = geometry.field_limits([e for v in errs.values() for e in v[2:]], geom)
+    lo, hi = geometry.field_limits([e for v in errs.values() for e in v[2:]], geom,
+                                   log=False)
     n = len(errs) + 1
     fig, axes = plt.subplots(n, 2, figsize=(9.6, 2.6 * n), squeeze=False)
 
@@ -238,12 +245,14 @@ def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> 
 
     for row, (key, (b, w, eb, ew)) in enumerate(errs.items(), start=1):
         for ax, idx, e, lbl in ((axes[row][0], b, eb, "best"), (axes[row][1], w, ew, "worst")):
-            im = geometry.draw_field(ax, e, geom, vmin=lo, vmax=hi, cmap="magma")
-            ax.set_title(f"{METHODS[key].label} — |error|, {lbl} #{idx}", fontsize=8)
+            im = geometry.draw_field(ax, e, geom, vmin=lo, vmax=hi, cmap="magma",
+                                     log=False)
+            ax.set_title(f"{METHODS[key].label} — rel. error, {lbl} #{idx}", fontsize=8)
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03).ax.tick_params(labelsize=6)
 
-    fig.suptitle(f"{name} — reconstruction error fields "
-                 f"(R={next(iter(fitted.values())).R}, shared colour scale)", fontsize=11)
+    fig.suptitle(f"{name} — relative reconstruction error fields "
+                 f"(R={next(iter(fitted.values())).R}, / HF peak, shared scale)",
+                 fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.975))
     path = layout.ensure(layout.reconstruction_dir(out_dir, name)) / "all_methods.png"
     fig.savefig(path, dpi=140, bbox_inches="tight")
