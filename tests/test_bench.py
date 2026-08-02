@@ -1279,3 +1279,64 @@ def test_adg_momentum_is_drawn_in_every_figure():
     for mode in ("cardinality", "tolerance"):
         assert "adg_momentum" not in excluded_for(mode), mode
     assert STYLE["adg_momentum"]["ls"] == "-.", "must be distinguishable where it overlays"
+
+
+def test_half_disk_is_drawn_as_the_full_symmetric_contact_line():
+    """[BEE20] Fig. 7-8 plot the contact stress over abscissas in [-1, 1], centred on 0.
+
+    FEM_SOLS stores only the half the symmetry plane makes redundant: 57 nodes from the
+    symmetry axis outward, peak first, zeros last. Drawn directly that is half the physics
+    with the peak jammed against the left edge. The mirror recovers the paper's picture.
+    """
+    from bench import geometry as g
+
+    for key in ("fem_lambda", "fem_lambda_pressure"):
+        d = ds_mod.load(key)
+        geom = d.geometry
+        assert geom.kind == "mirrored_line", key
+        assert len(geom.coords) == 2 * d.dim - 1, "node 0 is on the plane: written once"
+        assert geom.coords[0] == pytest.approx(-1.0)
+        assert geom.coords[-1] == pytest.approx(1.0)
+
+        full = g.mirror_half_profile(d.snapshots[:, 0])
+        assert full.size == 2 * d.dim - 1
+        assert np.allclose(full, full[::-1]), "must be symmetric about the plane"
+        # Zeros on BOTH sides, contact in the middle -- the paper's layout.
+        assert full[0] < 1e-6 * full.max() and full[-1] < 1e-6 * full.max()
+        centre = full[full.size // 2]
+        if key == "fem_lambda_pressure":
+            # Corrected, the centre carries essentially the peak value.
+            assert centre > 0.9 * full.max()
+        else:
+            # Uncorrected, the centre node carries half its tributary weight, so it sits
+            # at roughly half the peak. That is the half-support effect, not a defect.
+            assert 0.4 * full.max() < centre < 0.6 * full.max()
+
+
+def test_pressure_correction_lifts_the_centre_onto_the_peak():
+    """The half-support correction is what makes the mirrored profile peak at abscissa 0.
+
+    Measured over all 50 snapshots, centre value divided by the profile peak:
+
+        uncorrected  0.5034  (0.4668 - 0.5487)   -- exactly the half-support factor
+        corrected    0.9885  (0.9336 - 1.0000)
+
+    The corrected centre is *not* always the strict argmax (26 of 50) -- node-level noise
+    of a few percent means node 1 can edge above node 0 -- so this asserts the ratio,
+    which is the robust statement, rather than the argmax, which is not.
+    """
+    from bench import geometry as g
+
+    raw = ds_mod.load("fem_lambda")
+    press = ds_mod.load("fem_lambda_pressure")
+    c = raw.dim - 1                           # index of node 0 in the mirrored array
+
+    def ratios(d):
+        return np.array([g.mirror_half_profile(d.snapshots[:, k])[c]
+                         / g.mirror_half_profile(d.snapshots[:, k]).max()
+                         for k in range(d.n_snapshots)])
+
+    r_raw, r_press = ratios(raw), ratios(press)
+    assert 0.45 < r_raw.mean() < 0.55, r_raw.mean()
+    assert r_press.mean() > 0.95, r_press.mean()
+    assert r_press.min() > 0.9, "corrected centre should never fall far below the peak"

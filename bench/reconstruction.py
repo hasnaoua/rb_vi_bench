@@ -66,14 +66,25 @@ def _draw(ax, x, truth, approx, title, color, geom=None):
     ``x`` is the physical abscissa when the dataset supplies one, and the node index
     otherwise -- a distinction that only matters where the nodes are unevenly spaced,
     as on the Hertz contact arc.
+
+    A ``mirrored_line`` geometry reflects both curves about the symmetry plane first, so
+    the figure shows the full contact line the way [BEE20] Fig. 7-8 does. The same
+    transform is applied to the snapshot and to its reconstruction, so nothing about
+    their agreement changes.
     """
     geom = geom or geometry.line_geometry()
+    if geom.kind == "mirrored_line":
+        truth = geometry.mirror_half_profile(truth)
+        approx = geometry.mirror_half_profile(approx)
+        x = geom.coords
     ax.plot(x, truth, color="#222222", lw=1.6, label="snapshot")
     ax.plot(x, approx, color=color, lw=1.3, ls="--", label="reconstruction")
     ax.fill_between(x, truth, approx, color=color, alpha=0.18, lw=0)
     ax.set_title(title, fontsize=9)
     ax.grid(alpha=0.25, lw=0.5)
     ax.set_xlabel(geom.xlabel, fontsize=8)
+    if geom.ylabel:
+        ax.set_ylabel(geom.ylabel, fontsize=8)
     ax.tick_params(labelsize=7)
 
 

@@ -229,8 +229,7 @@ def _fem_lambda() -> Dataset:
         test_idx=np.asarray(test_idx, int),
         # Already ordered along the contact line: index 0 is the symmetry axis and index
         # increases outward. Established rather than assumed -- see FEM_LAMBDA_ORDERING.
-        geometry=geometry.line_geometry(
-            xlabel="contact node (0 = symmetry axis)"),
+        geometry=geometry.mirrored_line_geometry(snapshots.shape[1]),
     )
 
 
@@ -268,8 +267,7 @@ def _fem_lambda_pressure() -> Dataset:
         params=base.params,
         train_idx=base.train_idx,
         test_idx=base.test_idx,
-        geometry=geometry.line_geometry(
-            xlabel="contact node (0 = symmetry axis, half-support corrected)"),
+        geometry=geometry.mirrored_line_geometry(base.dim),
     )
 
 
