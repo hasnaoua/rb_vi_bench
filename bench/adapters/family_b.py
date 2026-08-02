@@ -204,3 +204,110 @@ def fit_greedy_adg(dataset, *, delta=None, R=None, normalize_snapshots=True) -> 
 def fit_greedy_adg_raw(dataset, *, delta=None, R=None) -> BasisResult:
     """ADG on un-normalized snapshots -- non-standard; see ``fit_greedy_adg``."""
     return fit_greedy_adg(dataset, delta=delta, R=R, normalize_snapshots=False)
+
+
+# ---------------------------------------------------------------------------
+# ADG with a pluggable stopping criterion
+# ---------------------------------------------------------------------------
+
+def _stop_absolute(errors: list[float], p: int, eps: float) -> bool:
+    """The spec's own rule: ``r_p <= epsilon``. Stop once the error is small enough."""
+    return errors[p] <= eps
+
+
+def _stop_relative_change(errors: list[float], p: int, eps: float) -> bool:
+    """Stagnation: ``|e(p) - e(p-1)| / e(p-1) <= epsilon``.
+
+    Stop when an enrichment round stops *buying* anything, rather than when the error
+    reaches a target. These answer different questions and neither implies the other:
+
+    * The absolute rule needs a meaningful error target. On a problem whose achievable
+      accuracy is unknown -- or bounded below by the training set, as every dataset here
+      is past some R -- there is no principled epsilon to ask for, and too tight a value
+      simply runs to ``R = n_train``.
+    * The relative rule needs no target. It stops where the convergence curve flattens,
+      which is the cardinality a user would pick by eye off the decrement plot. It is
+      scale-free, so the same epsilon transfers across datasets whose errors differ by
+      decades.
+
+    The risk is the mirror image: a greedy can stall for one round and then improve
+    sharply -- exactly what ADG's batch admission produces when a tied batch is split
+    across rounds -- so this rule can stop early on a temporary plateau where the absolute
+    rule would not. That is a real tradeoff, not a defect, and is why both are offered
+    rather than one replacing the other.
+    """
+    prev = errors[p - 1]
+    if prev <= 0:
+        return True          # nothing left to improve on
+    return abs(errors[p] - prev) / prev <= eps
+
+
+#: Stopping rules selectable by ``fit_greedy_adg_with_criterion``. Each takes the error
+#: history, the current round, and the tolerance, and returns whether to stop at ``p``.
+#: Round 0 is never offered to a rule that needs a predecessor.
+STOPPING_CRITERIA = {
+    "absolute": _stop_absolute,
+    "relative_change": _stop_relative_change,
+}
+
+#: Tolerance used to drive ADG to exhaustion before a criterion is applied.
+#: Below any achievable residual, so the stopping rule -- not this -- decides where to cut.
+_EXHAUSTIVE_EPS = 1e-12
+
+
+def fit_greedy_adg_with_criterion(dataset, *, delta=None, R=None,
+                                  criterion="relative_change") -> BasisResult:
+    """ADG stopped by a chosen rule rather than only by ``r_p <= epsilon``.
+
+    ADG is run once to exhaustion and the resulting error history is cut at the first
+    round satisfying the criterion. That is exact rather than an approximation: the cone
+    is nested and grows by whole batches, and ``residual_basis_sizes[p]`` records the
+    basis size at each round, so truncating there yields precisely the cone ADG would have
+    held had it stopped at ``p``. Cutting at an arbitrary R would *not* be safe -- it could
+    land mid-batch, splitting a set of tied maximizers the algorithm admits together.
+
+    ``R`` overrides the criterion entirely: matched-cardinality mode has no stopping rule,
+    so this falls through to plain ADG and the two coincide by construction.
+    """
+    if R is not None:
+        result = fit_greedy_adg(dataset, R=R)
+        result.method = f"adg_{criterion}"
+        return result
+
+    rule = STOPPING_CRITERIA[criterion]
+    model, generators, seconds, counts = _fit_to_tolerance(
+        AngularDefectGreedy, dataset, _EXHAUSTIVE_EPS,
+        zero_tol=_ZERO_TOL["adg"], normalize_snapshots=True)
+
+    errors = [float(e) for e in model.relative_residual_history]
+    sizes = [int(s) for s in model.residual_basis_sizes]
+    eps = float(delta)
+
+    stop_at = len(errors) - 1
+    start = 0 if criterion == "absolute" else 1
+    for p in range(start, len(errors)):
+        if rule(errors, p, eps):
+            stop_at = p
+            break
+
+    keep = sizes[stop_at] if sizes else generators.shape[1]
+    keep = max(1, min(keep, generators.shape[1]))
+    return BasisResult(
+        method=f"adg_{criterion}",
+        family="greedy.core",
+        paper_tag="",
+        generators=generators[:, :keep],
+        R=keep,
+        selected_indices=[int(i) for i in model.selected_indices[:keep]],
+        errors=errors[: stop_at + 1],
+        fit_seconds=seconds,
+        solver_calls=counts,
+        normalized_generators=False,
+        notes=(f"ADG stopped by '{criterion}' at round {stop_at} of {len(errors) - 1}; "
+               f"R={keep}"),
+    )
+
+
+def fit_greedy_adg_relchange(dataset, *, delta=None, R=None) -> BasisResult:
+    return fit_greedy_adg_with_criterion(dataset, delta=delta, R=R,
+                                         criterion="relative_change")

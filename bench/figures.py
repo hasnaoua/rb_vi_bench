@@ -49,6 +49,8 @@ STYLE: dict[str, dict] = {
     "mcpg_greedy": dict(color="#5cc98d", marker="^", ls="--", label="mCPG (greedy.core)"),
     "adg":         dict(color="#e8760a", marker="D", ls="-",  label="ADG (batch normalized)"),
     "adg_raw":     dict(color="#f0b27a", marker="d", ls=":",  label="ADG (un-normalized)"),
+    "adg_relchange": dict(color="#a04000", marker="*", ls="-.",
+                          label="ADG (stop on stagnation)"),
     "nmf_s0":      dict(color="#c0392b", marker="v", ls="-",  label="NMF (seed 0)"),
     "nmf_s1":      dict(color="#d98880", marker="v", ls=":",  label="NMF (seed 1)"),
     "nmf_s2":      dict(color="#e6b0aa", marker="v", ls=":",  label="NMF (seed 2)"),

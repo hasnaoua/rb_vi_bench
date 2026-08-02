@@ -685,17 +685,22 @@ def test_default_methods_are_one_canonical_version_per_algorithm():
     from bench.adapters import DEFAULT_METHODS
 
     assert set(DEFAULT_METHODS) <= set(METHODS)
-    assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "nmf_s0", "orthant")
+    assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "adg_relchange",
+                               "nmf_s0", "orthant")
     # POD is deliberately out: it is not a dual basis at all ([BEE20] §5), so scoring it
     # beside methods bound by lambda >= 0 compares different problems. Still registered
     # for the sign-violation checks.
     assert "pod_control" not in DEFAULT_METHODS and "pod_control" in METHODS
 
-    # One CPG, one mCPG, one ADG, one NMF.
-    for prefix, expected in (("cpg_", 1), ("mcpg_", 1), ("adg", 1), ("nmf_", 1)):
+    # One implementation per algorithm -- except ADG, which contributes two entries
+    # deliberately: they are the *same* algorithm under two stopping criteria (absolute
+    # error vs relative stagnation), and comparing the criteria is the point.
+    for prefix, expected in (("cpg_", 1), ("mcpg_", 1), ("adg", 2), ("nmf_", 1)):
         n = sum(1 for k in DEFAULT_METHODS
                 if k.startswith(prefix) and not (prefix == "cpg_" and k.startswith("mcpg_")))
         assert n == expected, f"{prefix}: {n} in the default set"
+    # Both ADG entries must be the normalized form; only the stopping rule differs.
+    assert {"adg", "adg_relchange"} <= set(DEFAULT_METHODS)
 
     # ADG must be the normalized form, never the non-standard one.
     assert "adg_raw" not in DEFAULT_METHODS
@@ -1080,6 +1085,75 @@ def test_per_snapshot_ratio_never_divides_by_zero(bumps):
     ps = metrics.precision.per_snapshot_rel_errors(errs, cols)
     assert len(ps) == bumps.train().shape[1], "zero column should be dropped, not 0/0"
     assert np.all(np.isfinite(ps))
+
+
+def test_adg_stagnation_criterion_cuts_where_the_history_says(bumps):
+    """The stop must land at the first round satisfying |e(p)-e(p-1)|/e(p-1) <= eps.
+
+    Recomputed independently from ADG's own error history rather than trusting the
+    adapter's bookkeeping, since an off-by-one in the round index would silently return
+    a cone one batch too large or too small.
+    """
+    from greedy.core.angle_defect_greedy import AngularDefectGreedy
+
+    from bench.adapters.family_b import fit_greedy_adg_relchange
+
+    rows = np.ascontiguousarray(bumps.train().T)
+    ref = AngularDefectGreedy(snapshots=rows, epsilon=1e-12, normalize_snapshots=True)
+    ref.compute_phases()
+    hist = [float(e) for e in ref.relative_residual_history]
+    sizes = [int(s) for s in ref.residual_basis_sizes]
+
+    for eps in (0.3, 0.1, 0.02):
+        expected_p = next(
+            (p for p in range(1, len(hist))
+             if hist[p - 1] <= 0 or abs(hist[p] - hist[p - 1]) / hist[p - 1] <= eps),
+            len(hist) - 1)
+        got = fit_greedy_adg_relchange(bumps, delta=eps)
+        assert got.R == sizes[expected_p], (eps, got.R, sizes[expected_p])
+
+
+def test_adg_stagnation_truncates_at_a_batch_boundary(bumps):
+    """Cutting mid-batch would split a set of tied maximizers ADG admits together.
+
+    Every reachable R must therefore be one of the basis sizes ADG actually passed
+    through, never an arbitrary integer.
+    """
+    from greedy.core.angle_defect_greedy import AngularDefectGreedy
+
+    rows = np.ascontiguousarray(bumps.train().T)
+    ref = AngularDefectGreedy(snapshots=rows, epsilon=1e-12, normalize_snapshots=True)
+    ref.compute_phases()
+    boundaries = set(int(s) for s in ref.residual_basis_sizes)
+
+    for eps in (0.5, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01):
+        r = METHODS["adg_relchange"].fit(bumps, delta=eps)
+        assert r.R in boundaries, f"eps={eps}: R={r.R} is not a batch boundary"
+        # And the cone must be a prefix of the exhaustive one: nested by construction.
+        assert r.generators.shape[1] == r.R
+
+
+def test_adg_stagnation_matches_plain_adg_at_matched_cardinality(bumps):
+    """Matched-R mode has no stopping rule, so the two must coincide exactly."""
+    for R in (3, 6, 10):
+        a = METHODS["adg"].fit(bumps, R=R)
+        b = METHODS["adg_relchange"].fit(bumps, R=R)
+        assert b.R == a.R == R
+        assert np.allclose(a.generators, b.generators)
+        assert b.method == "adg_relative_change"
+
+
+def test_stopping_criteria_are_pluggable():
+    """Both rules are registered and the absolute one reproduces the spec's behaviour."""
+    from bench.adapters.family_b import STOPPING_CRITERIA
+
+    assert set(STOPPING_CRITERIA) == {"absolute", "relative_change"}
+    hist = [1.0, 0.5, 0.49, 0.2]
+    assert STOPPING_CRITERIA["absolute"](hist, 3, 0.25) is True
+    assert STOPPING_CRITERIA["absolute"](hist, 1, 0.25) is False
+    # |0.49-0.5|/0.5 = 0.02 -> stalls at p=2 for eps=0.05, not at p=1 (|0.5-1|/1 = 0.5)
+    assert STOPPING_CRITERIA["relative_change"](hist, 2, 0.05) is True
+    assert STOPPING_CRITERIA["relative_change"](hist, 1, 0.05) is False
 
 
 def test_coverage_improves_with_cardinality(bumps):
