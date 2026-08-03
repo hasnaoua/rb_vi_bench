@@ -104,6 +104,15 @@ def fit_orthant(dataset, *, delta=None, R=None) -> BasisResult:
     Projection onto ``span_+{e_i : i in S}`` of a non-negative vector keeps ``S`` exactly
     and drops the rest, so the residual is the norm of the discarded coordinates -- closed
     form, no NNLS.
+
+    **Its reported ``calls_total`` is the mCPG ordering run, not the cone assembly.**
+    Assembling the cone itself is free; every solver call counted here comes from the mCPG
+    pass used to decide *which* axes, and it therefore matches mCPG's count almost exactly
+    (159 NNLS + 5 minimize against mCPG's 159 + 5 on toy_bee20 at R=6). So this baseline is
+    cheap in the sense that matters -- it needs nothing but the coordinate directions --
+    but the offline-cost panel does not show that, and reading its curve as "what a naive
+    baseline costs" is wrong. Tracking mCPG is what buys comparability; the price is that
+    the cost column measures the tracking, not the baseline.
     """
     from rb_vi_common.cone_greedy import mcpg
 

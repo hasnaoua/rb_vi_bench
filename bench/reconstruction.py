@@ -28,7 +28,6 @@ projection for the cone methods and NMF, unconstrained least squares for the POD
 from __future__ import annotations
 
 import argparse
-import math
 from pathlib import Path
 
 from . import _paths  # noqa: F401  -- forces Agg before pyplot
@@ -38,7 +37,7 @@ import numpy as np
 
 from . import datasets as ds_mod, geometry, layout
 from .adapters import DEFAULT_METHODS, METHODS
-from .figures import STYLE, excluded_for
+from .figures import FIGURE_EXCLUDED, STYLE
 from .metrics.precision import reconstruct, uses_cone_projection
 from .runner import _subsample
 
@@ -324,8 +323,7 @@ def main(argv=None) -> int:
             columns = dataset.train()
 
         fitted = {}
-        # Fits are at matched R, so the cardinality-mode exclusion applies.
-        for m in [k for k in args.methods if k not in excluded_for('cardinality')]:
+        for m in [k for k in args.methods if k not in FIGURE_EXCLUDED]:
             try:
                 fitted[m] = METHODS[m].fit(dataset, R=args.R)
             except Exception as exc:                   # noqa: BLE001

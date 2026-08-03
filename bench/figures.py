@@ -13,8 +13,9 @@ Four panels per dataset, one line per method:
 * **precision** -- test (solid) and train (dashed) max relative projection error.
 * **conditioning** -- Gram condition number, log scale. Undefined below R=2.
 * **orthogonality** -- ``e_orth`` ([NDEE22] Eq. 41), bounded by 1; higher is a wider cone.
-* **offline cost** -- total constrained-solver calls, log scale. Machine-independent,
-  unlike wall-clock.
+* **offline cost** -- total constrained-solver calls. Machine-independent, unlike
+  wall-clock -- but it counts *constrained* solves only, so NMF sits at exactly 0 and
+  that means "issues none", not "is free".
 
 The ``orthant`` and ``pod_control`` references are kept off the *comparison* axes -- see
 ``FIGURE_EXCLUDED`` -- because they sit orders of magnitude from the methods being
@@ -23,17 +24,32 @@ their own figure per dataset (``reference_orthant.png``, and one panel per metri
 ``<dataset>/orthant/`` with ``--split``) carrying every panel the comparison figures do.
 Alone on their own axes there is no shared range to protect.
 
-**Scales are logarithmic wherever the data permits it.** Every panel here is strictly
-positive -- errors, condition numbers, ``e_orth`` in (0,1], apertures in (0,90], solver
-counts -- so all are log. Only ``excess`` uses symlog, because it is *exactly* zero for
-any method whose generators are snapshots and a log axis would drop those series
-entirely; the decrement figures do the same, since they can also go negative.
+**Scales are logarithmic wherever the data permits it, and symlog wherever it does
+not.** Errors, condition numbers, ``e_orth`` in (0,1] and apertures in (0,90] are
+strictly positive, so those panels are log. Three columns are not, and each is exactly
+zero for a reason worth seeing rather than hiding -- a log axis renders no zero at all,
+so a series that is zero everywhere vanishes from the panel and reads as missing data:
+
+* ``cover`` is exactly 0 for the orthant in 15 cells -- it genuinely contains ``K_full``,
+* ``calls_total`` is exactly 0 for NMF in all 346 of its cells, since its multiplicative
+  updates issue no constrained solve; on a log axis the method vanished entirely,
+* ``excess`` is symlog for a *different* reason. It is never literally zero -- for CPG and
+  ADG it runs 2.8e-17 to 5.5e-16, round-off around a structural zero, since a cone spanned
+  by snapshots cannot leave ``K_full``. A log axis renders those values perfectly well,
+  which is the problem: thirteen decades of floating-point noise get the same visual
+  weight as mCPG's real 0.26 excess. symlog's linear band (1% of the largest value)
+  collapses the noise onto zero, where it belongs, and leaves the genuine excursions
+  legible.
+
+The decrement figures use symlog for the same reason plus one more: their values can go
+negative. ``test_scales_are_logarithmic_wherever_the_data_allows`` pins the rule, and a
+companion test re-checks it against the produced CSVs so a newly-zero column cannot slip
+onto a log axis unnoticed.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -41,9 +57,9 @@ from pathlib import Path
 from . import _paths  # noqa: F401  -- forces the Agg backend before pyplot is imported
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 from . import layout
+from .tabular import num as _num, read_rows
 
 RESULTS = _paths.ROOT / "results"
 
@@ -70,13 +86,19 @@ STYLE: dict[str, dict] = {
 #: how wide it opens, and how far it reaches outside. See ``metrics.cone_geometry``.
 #: Both directions are shown, because neither implies the other: a cone can cover
 #: ``K_full`` perfectly while extending far beyond it, or sit strictly inside while
-#: missing most of it. ``excess`` uses a LINEAR axis on purpose -- it is exactly zero for
-#: any method whose generators are snapshots, and a log axis would drop those series
-#: entirely, making "contains no excess" indistinguishable from "not measured". symlog
-#: gives the decades where they matter while keeping an exact zero on the axis. Every
-#: other panel is strictly positive and therefore plain log.
+#: missing most of it. Both use SYMLOG, for two different reasons. ``cover`` is *exactly*
+#: zero for the orthant in 15 cells -- it really does contain ``K_full`` -- and a log axis
+#: drops those points, making the baseline's defining property invisible in the very panel
+#: that measures it. ``excess`` is never exactly zero; for snapshot-spanned cones it is
+#: round-off (2.8e-17 to 5.5e-16) about a structural zero, which a log axis renders as
+#: thirteen decades of noise weighted equally with mCPG's real 0.26. symlog's linear band
+#: fixes both: it puts an exact zero on the axis and collapses the noise onto it. The
+#: other two panels are strictly positive and therefore plain log.
 CONE_PANELS = (
-    ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "log",
+    # symlog, not log: a cone can cover K_full EXACTLY -- the orthant does, in 15 cells --
+    # and a log axis drops those points, hiding "W+ contains K_full" in the very panel
+    # where it is the headline.
+    ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "symlog",
      "how much of the full cone is MISSED (too small)"),
     ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "symlog",
      "how much of the cone lies OUTSIDE (too large)"),
@@ -97,7 +119,12 @@ PANELS = (
     ("test_max_rel_err", "max relative projection error", "log", "precision (test set)"),
     ("gram_cond",        "Gram condition number",         "log", "conditioning"),
     ("e_orth_mean",      "mean $e_{orth}$",               "log", "orthogonality (Eq. 41)"),
-    ("calls_total",      "constrained solver calls",      "log", "offline cost"),
+    # symlog, not log: this counts CONSTRAINED solves, and NMF issues none -- its
+    # multiplicative updates are dense linear algebra. On a log axis all 346 of its cells
+    # were dropped and the method vanished from the panel entirely, reading as "not
+    # measured" rather than "no constrained solves". Zero here means the instrumentation
+    # does not see this method's work, NOT that the method is free.
+    ("calls_total",      "constrained solver calls",      "symlog", "offline cost"),
 )
 
 
@@ -116,22 +143,10 @@ def error_column(series) -> tuple[str, str]:
     return "train_max_rel_err", "precision (train set — no split)"
 
 
-def _num(row: dict, key: str) -> float:
-    raw = row.get(key, "")
-    if raw in ("", None):
-        return float("nan")
-    try:
-        return float(raw)
-    except ValueError:
-        return float("nan")
-
-
 def load_cardinality_rows(path: Path) -> dict[str, dict[str, list[tuple[float, dict]]]]:
     """``{dataset: {method: [(R, row), ...]}}`` from the matched-cardinality cells."""
-    with path.open() as fh:
-        rows = list(csv.DictReader(fh))
     out: dict[str, dict[str, list[tuple[float, dict]]]] = defaultdict(lambda: defaultdict(list))
-    for r in rows:
+    for r in read_rows(path):
         if r.get("mode") != "cardinality" or r.get("skip_reason"):
             continue
         R = _num(r, "R")
@@ -162,24 +177,6 @@ def load_cardinality_rows(path: Path) -> dict[str, dict[str, list[tuple[float, d
 #: ``report.txt``, where a reader can consult them without paying for them visually.
 FIGURE_EXCLUDED: frozenset[str] = frozenset({"orthant", "pod_control"})
 
-#: Nothing is currently mode-excluded; kept so the distinction stays expressible.
-#:
-#: ``adg_momentum`` differs from ``adg`` *only* in when it stops, and matched-cardinality
-#: mode has no stopping rule -- every method is handed the same R -- so on that axis the
-#: two coincide exactly (verified identical in 305 of 305 cells). It is drawn anyway, in
-#: dash-dot over ``adg``'s solid line, so the coincidence is *visible* rather than the
-#: method appearing absent. Where it genuinely differs is the tolerance axis, which is
-#: where its stopping rule is the thing being measured.
-MATCHED_R_DUPLICATES: frozenset[str] = frozenset()
-
-
-def excluded_for(mode: str = "cardinality") -> frozenset[str]:
-    """Methods to omit from a figure drawn against ``mode``."""
-    if mode == "cardinality":
-        return FIGURE_EXCLUDED | MATCHED_R_DUPLICATES
-    return FIGURE_EXCLUDED
-
-
 def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
            only=None):
     """Draw one metric panel.
@@ -193,7 +190,7 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
     if only is not None:
         series = {m: p for m, p in series.items() if m in only}
     else:
-        series = {m: p for m, p in series.items() if m not in excluded_for("cardinality")}
+        series = {m: p for m, p in series.items() if m not in FIGURE_EXCLUDED}
     for method, points in series.items():
         style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
         xs = [R for R, _ in points]

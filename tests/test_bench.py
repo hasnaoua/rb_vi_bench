@@ -20,6 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from bench import _paths
 from bench import datasets as ds_mod
 from bench import metrics
 from bench.adapters import CROSS_FAMILY_PAIRS, METHODS
@@ -445,6 +446,30 @@ def test_no_split_reports_nan_not_zero(bumps):
     assert ds.test() is None
     row = metrics.precision.evaluate(ds, METHODS["cpg_bee20"].fit(ds, R=5))
     assert np.isnan(row["test_max_rel_err"])
+
+
+def test_subsample_carries_the_field_geometry_through():
+    """Subsampling drops SNAPSHOTS, never the dataset's description of its own nodes.
+
+    ``_subsample`` rebuilds the Dataset field by field, and ``geometry`` was missing from
+    that list -- so any dataset above the subsample threshold reached the reconstruction
+    figures with ``geometry=None`` and was drawn as an index-ordered curve. For
+    ``fem_lambda`` that silently discards the mirroring that makes the figure match
+    [BEE20] Fig. 7-8, and for ``physics`` it flattens a 76x101 grid into a 7676-point
+    line. No shipped dataset is currently both geometric and large enough to trip it, so
+    nothing in the results was wrong -- but it fires at any smaller ``--subsample``,
+    which is exactly when someone is iterating quickly and least likely to notice.
+    """
+    from bench.runner import _subsample
+
+    for key in ("fem_lambda", "fem_lambda_pressure", "physics"):
+        full = ds_mod.load(key)
+        sub = _subsample(full, 20)
+        assert sub.n_snapshots == 20, key
+        assert sub.geometry is not None, f"{key}: geometry dropped by subsampling"
+        assert sub.geometry.kind == full.geometry.kind, key
+        # Geometry describes NODES, which subsampling does not touch.
+        assert sub.dim == full.dim, key
 
 
 def test_subsample_preserves_split_and_callable():
@@ -1218,19 +1243,22 @@ def test_fast_datasets_load_and_are_valid(key):
         assert ds.A is not None and ds.B_of_mu(0).ndim == 2
 
 
-def test_nothing_is_currently_mode_excluded_beyond_the_references():
-    """The mode-aware hook stays, but only the two references use it.
+def test_only_the_two_references_are_kept_off_the_comparison_axes():
+    """Exclusion is a property of the METHOD, not of the axis it is drawn against.
 
-    adg_momentum was excluded from cardinality figures for one commit and that made it
-    look absent. It is drawn everywhere now; the hook is kept because the distinction
-    between "a reference" and "a duplicate on this axis" is still worth expressing.
+    An earlier version routed this through a mode-aware ``excluded_for(mode)`` so that
+    ``adg_momentum`` could be dropped from matched-cardinality figures, where it
+    coincides with ``adg``. That made the method look absent rather than coincident, so
+    the exclusion was reverted and the set it fed became permanently empty -- leaving a
+    ``mode`` parameter that could not change any answer. One flat set now, and the
+    coincidence is shown by drawing it in dash-dot over ``adg`` instead of hiding it.
     """
-    from bench.figures import FIGURE_EXCLUDED, MATCHED_R_DUPLICATES, excluded_for
+    from bench import decrement, figures, reconstruction
 
-    assert MATCHED_R_DUPLICATES == frozenset()
-    assert FIGURE_EXCLUDED == frozenset({"orthant", "pod_control"})
-    for mode in ("cardinality", "tolerance"):
-        assert excluded_for(mode) == FIGURE_EXCLUDED, mode
+    assert figures.FIGURE_EXCLUDED == frozenset({"orthant", "pod_control"})
+    # Every drawing module filters through the same set; none re-derives its own.
+    for mod in (decrement, reconstruction):
+        assert mod.FIGURE_EXCLUDED is figures.FIGURE_EXCLUDED
 
 
 def test_momentum_and_adg_coincide_at_matched_cardinality(bumps):
@@ -1274,10 +1302,9 @@ def test_adg_momentum_is_drawn_in_every_figure():
     in that mode -- so it overlays rather than adds information. It is drawn anyway, in
     dash-dot, so the coincidence is visible instead of the method appearing absent.
     """
-    from bench.figures import STYLE, excluded_for
+    from bench.figures import FIGURE_EXCLUDED, STYLE
 
-    for mode in ("cardinality", "tolerance"):
-        assert "adg_momentum" not in excluded_for(mode), mode
+    assert "adg_momentum" not in FIGURE_EXCLUDED
     assert STYLE["adg_momentum"]["ls"] == "-.", "must be distinguishable where it overlays"
 
 
@@ -1381,11 +1408,42 @@ def test_scales_are_logarithmic_wherever_the_data_allows():
     from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
 
     scales = {c: sc for c, _y, sc, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS}
-    for column in ("test_max_rel_err", "gram_cond", "e_orth_mean", "calls_total",
-                   "cover_mean_err", "cone_hausdorff", "aperture_mean_deg",
-                   "test_max_rel_err_persnap"):
+    for column in ("test_max_rel_err", "gram_cond", "e_orth_mean", "cone_hausdorff",
+                   "aperture_mean_deg", "test_max_rel_err_persnap"):
         assert scales[column] == "log", (column, scales[column])
-    assert scales["excess_mean_err"] == "symlog", "exact zeros cannot go on a log axis"
+    # cover and calls_total are EXACTLY zero for some method, and a log axis drops those
+    # points without a trace -- turning a result into an apparent gap in the data.
+    #   cover:       exactly 0 for the orthant, which really does contain K_full
+    #   calls_total: exactly 0 for NMF, which issues no CONSTRAINED solves
+    # excess is symlog for a different reason: it is never exactly zero, but for cones
+    # spanned by snapshots it is round-off (~1e-16) about a structural zero, and a log
+    # axis would weight that noise equally with mCPG's real 0.26 excess.
+    for column in ("excess_mean_err", "cover_mean_err", "calls_total"):
+        assert scales[column] == "symlog", (column, scales[column])
+
+
+@pytest.mark.parametrize("grid", ["grid.csv", "sweep_dense/grid.csv"])
+def test_no_log_panel_silently_drops_a_zero_valued_cell(grid):
+    """The rule above, checked against what the run actually produced.
+
+    The static test pins today's three columns; this one catches the next one. A log
+    axis cannot render 0, so any panel whose column is zero somewhere in the results is
+    dropping real measurements -- and a method that is zero *everywhere* disappears from
+    the panel entirely, which reads as "not measured" rather than as the finding it is.
+    """
+    from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
+    from bench.tabular import num, read_rows
+
+    path = _paths.ROOT / "results" / grid
+    if not path.is_file():
+        pytest.skip(f"{path} not present; run bench.runner first")
+
+    rows = [r for r in read_rows(path) if not r.get("skip_reason")]
+    for column, _y, scale, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS:
+        if scale != "log":
+            continue
+        zeros = {r["method"] for r in rows if num(r, column) == 0.0}
+        assert not zeros, f"{column} is on a log axis but is 0 for {sorted(zeros)}"
 
 
 def test_axial_profile_matches_the_publication_reduction():

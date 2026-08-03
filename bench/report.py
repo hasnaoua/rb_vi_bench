@@ -12,37 +12,14 @@ never measured looks identical to one that scored badly, unless the skips are sh
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 from collections import defaultdict
 from pathlib import Path
 
 from . import _paths
+from .tabular import fmt as _fmt, num as _num, read_rows as _load
 
 RESULTS = _paths.ROOT / "results"
-
-
-def _load(path: Path) -> list[dict]:
-    if not path.is_file():
-        raise FileNotFoundError(f"{path} not found; run `python -m bench.runner` first")
-    with path.open() as fh:
-        return list(csv.DictReader(fh))
-
-
-def _num(row: dict, key: str) -> float:
-    raw = row.get(key, "")
-    if raw in ("", None):
-        return float("nan")
-    try:
-        return float(raw)
-    except ValueError:
-        return float("nan")
-
-
-def _fmt(v: float, spec: str = ".4g") -> str:
-    if v is None or (isinstance(v, float) and math.isnan(v)):
-        return "-"
-    return format(v, spec)
 
 
 def _table(title: str, headers: list[str], rows: list[list[str]], note: str = "") -> str:

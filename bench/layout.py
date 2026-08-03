@@ -46,7 +46,7 @@ def slug(dataset: str) -> str:
     out = (dataset.replace("[", "_").replace("]", "")
            .replace("<", "").replace("=", "")
            .replace("(", "").replace(")", "")
-           .replace(" ", "_").replace("-", "-"))
+           .replace(" ", "_"))
     # Collapse the doubled underscores a name like "X (pressure)" would otherwise leave.
     while "__" in out:
         out = out.replace("__", "_")

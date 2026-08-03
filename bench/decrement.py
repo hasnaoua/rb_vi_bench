@@ -40,31 +40,18 @@ problem -- R is R -- which is why it is the primary figure of the two.
 from __future__ import annotations
 
 import argparse
-import csv
 import math
-from collections import defaultdict
 from pathlib import Path
 
 from . import _paths  # noqa: F401  -- forces Agg before pyplot
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 from . import layout
-from .figures import STYLE, _num, excluded_for
+from .figures import FIGURE_EXCLUDED, STYLE
+from .tabular import num as _num, rows_by_dataset_and_method
 
 RESULTS = _paths.ROOT / "results"
-
-
-def _rows(path: Path, mode: str) -> dict[str, dict[str, list[dict]]]:
-    with path.open() as fh:
-        rows = list(csv.DictReader(fh))
-    out: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
-    for r in rows:
-        if r.get("mode") != mode or r.get("skip_reason"):
-            continue
-        out[r["dataset"]][r["method"]].append(r)
-    return out
 
 
 def decrements_vs_cardinality(points: list[tuple[float, float]]) -> tuple[list, list]:
@@ -126,9 +113,7 @@ def _symlog_threshold(values) -> float:
 
 def _draw(ax, series, xlabel, title, xscale, mode="cardinality"):
     everything = []
-    # adg_relchange is a duplicate of adg on the cardinality axis but genuinely distinct
-    # on the tolerance axis, where its stopping rule is what is being measured.
-    series = {m: v for m, v in series.items() if m not in excluded_for(mode)}
+    series = {m: v for m, v in series.items() if m not in FIGURE_EXCLUDED}
     for method, (xs, ys) in series.items():
         if not xs:
             continue
@@ -226,7 +211,7 @@ def main(argv=None) -> int:
 
     card = args.cardinality_results / "grid.csv"
     if card.is_file():
-        for dataset, by_method in _rows(card, "cardinality").items():
+        for dataset, by_method in rows_by_dataset_and_method(card, "cardinality").items():
             path = figure_vs_cardinality(dataset, by_method, args.out)
             if path:
                 written.append(path)
@@ -235,7 +220,7 @@ def main(argv=None) -> int:
 
     tol = args.tolerance_results / "grid.csv"
     if tol.is_file():
-        for dataset, by_method in _rows(tol, "tolerance").items():
+        for dataset, by_method in rows_by_dataset_and_method(tol, "tolerance").items():
             path = figure_vs_tolerance(dataset, by_method, args.out)
             if path:
                 written.append(path)

@@ -28,7 +28,6 @@ training set for exploratory runs. It changes the numbers and is recorded in the
 from __future__ import annotations
 
 import argparse
-import csv
 import dataclasses
 import json
 import platform
@@ -40,6 +39,7 @@ from pathlib import Path
 import numpy as np
 
 from . import _paths, datasets as ds_mod, metrics
+from .tabular import write_csv as _write_csv
 from .adapters import CROSS_FAMILY_PAIRS, DEFAULT_METHODS, METHODS
 from .types import Dataset
 
@@ -82,13 +82,17 @@ def _subsample(dataset: Dataset, cap: int | None) -> Dataset:
     fields["train_idx"] = project(dataset.train_idx)
     fields["test_idx"] = project(dataset.test_idx)
     fields["name"] = f"{dataset.name}[n<={cap}]"
-    # dataclasses.asdict does not round-trip callables; carry B_of_mu explicitly,
-    # re-indexed onto the retained columns.
+    # dataclasses.asdict does not round-trip anything that is not plain data: callables
+    # are lost and NESTED DATACLASSES are flattened to dicts. B_of_mu, A and geometry all
+    # have to be carried across explicitly. Missing geometry does not raise here -- it
+    # surfaces much later as `AttributeError: 'dict' object has no attribute 'is_field'`
+    # the first time a figure asks the dataset how to draw itself.
     order = sorted(keep)
     original_B = dataset.B_of_mu
     fields["B_of_mu"] = (None if original_B is None
                          else (lambda j, o=order, f=original_B: f(o[j])))
     fields["A"] = dataset.A
+    fields["geometry"] = dataset.geometry
     return Dataset(**fields)
 
 
@@ -160,23 +164,6 @@ def run_agreement(dataset: Dataset, *, delta: float) -> list[dict]:
             row["skip_reason"] = f"{type(exc).__name__}: {exc}"
         rows.append(row)
     return rows
-
-
-def _write_csv(path: Path, rows: list[dict]) -> None:
-    if not rows:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Union of keys: cells legitimately produce different columns (a dataset without
-    # an inf-sup input has no beta columns), and a fixed header would drop them.
-    fields: list[str] = []
-    for row in rows:
-        for k in row:
-            if k not in fields:
-                fields.append(k)
-    with path.open("w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields, restval="")
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 def main(argv=None) -> int:

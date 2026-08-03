@@ -37,6 +37,26 @@ from typing import Callable
 import numpy as np
 
 
+#: Snapshots whose norm falls below this fraction of the largest are dropped at
+#: ``Dataset`` construction, before any algorithm sees them.
+#:
+#: They are not data, they are absence of data: a parameter value at which no contact
+#: occurred, so ``lambda = 0`` everywhere. ``physics`` carries two, at norm ~7e-67 against
+#: a typical 2e9. Keeping them corrupts every angle-based method, because normalizing a
+#: zero vector is undefined and any per-snapshot relative criterion sees an arbitrarily
+#: large relative error on a vector that carries no information. It also violates the ADG
+#: spec's own precondition ``S subset R_+^m \ {0}``.
+#:
+#: The threshold sits at the numerical-zero scale rather than at a "physically small" one:
+#: dropping genuinely small but non-zero contact states would be a modelling decision, not
+#: numerical hygiene.
+#:
+#: Module-level on purpose. Annotated inside the ``@dataclass`` body it became a *field* --
+#: a constructor parameter that let any caller silently change the filtering threshold for
+#: one dataset, and an entry in ``asdict`` that had to be round-tripped.
+ZERO_NORM_RTOL: float = 1e-8
+
+
 @dataclass
 class BasisResult:
     """One fitted dual cone, in canonical (column) orientation.
@@ -106,21 +126,6 @@ class Dataset:
     #: How many numerically-zero snapshots were discarded at construction.
     n_dropped_zero: int = 0
 
-    #: Snapshots whose norm falls below this fraction of the largest are dropped at
-    #: construction, before any algorithm sees them.
-    #:
-    #: They are not data, they are absence of data: a parameter value at which no contact
-    #: occurred, so ``lambda = 0`` everywhere. ``physics`` carries two, at norm ~7e-67
-    #: against a typical 2e9. Keeping them corrupts every angle-based method, because
-    #: normalizing a zero vector is undefined and any per-snapshot relative criterion sees
-    #: an arbitrarily large relative error on a vector that carries no information. It
-    #: also violates the ADG spec's own precondition ``S subset R_+^m \ {0}``.
-    #:
-    #: The threshold is deliberately at the numerical-zero scale rather than at a
-    #: "physically small" one: dropping genuinely small but non-zero contact states would
-    #: be a modelling decision, not a numerical hygiene one.
-    ZERO_NORM_RTOL: float = 1e-8
-
     def __post_init__(self) -> None:
         S = np.asarray(self.snapshots, dtype=float)
         if S.ndim != 2:
@@ -130,7 +135,7 @@ class Dataset:
 
         norms = np.linalg.norm(S, axis=0)
         scale = float(norms.max()) if norms.size else 0.0
-        keep = norms > self.ZERO_NORM_RTOL * scale if scale > 0 else np.ones(S.shape[1], bool)
+        keep = norms > ZERO_NORM_RTOL * scale if scale > 0 else np.ones(S.shape[1], bool)
         if not keep.all():
             S = S[:, keep]
             if S.shape[1] == 0:
