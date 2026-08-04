@@ -24,22 +24,17 @@ their own figure per dataset (``reference_orthant.png``, and one panel per metri
 ``<dataset>/orthant/`` with ``--split``) carrying every panel the comparison figures do.
 Alone on their own axes there is no shared range to protect.
 
-**Scales are logarithmic wherever the data permits it, and symlog wherever it does
-not.** Errors, condition numbers, ``e_orth`` in (0,1] and apertures in (0,90] are
-strictly positive, so those panels are log. Three columns are not, and each is exactly
-zero for a reason worth seeing rather than hiding -- a log axis renders no zero at all,
-so a series that is zero everywhere vanishes from the panel and reads as missing data:
+**Scales are logarithmic.** Every panel here is log except ``excess``, which is symlog:
+it is never literally zero, but for snapshot-spanned cones it is round-off (2.8e-17 to
+5.5e-16) about a structural zero, and on a log axis thirteen decades of that noise would
+carry the same visual weight as mCPG's real 0.26 excess. symlog's linear band collapses
+the noise onto zero and leaves the genuine excursions legible; the decrement figures use
+symlog for that reason plus one more, since their values can go negative.
 
-* ``cover`` is exactly 0 for the orthant in 15 cells -- it genuinely contains ``K_full``,
-* ``calls_total`` is exactly 0 for NMF in all 346 of its cells, since its multiplicative
-  updates issue no constrained solve; on a log axis the method vanished entirely,
-* ``excess`` is symlog for a *different* reason. It is never literally zero -- for CPG and
-  ADG it runs 2.8e-17 to 5.5e-16, round-off around a structural zero, since a cone spanned
-  by snapshots cannot leave ``K_full``. A log axis renders those values perfectly well,
-  which is the problem: thirteen decades of floating-point noise get the same visual
-  weight as mCPG's real 0.26 excess. symlog's linear band (1% of the largest value)
-  collapses the noise onto zero, where it belongs, and leaves the genuine excursions
-  legible.
+**A log axis cannot render an exact zero, and two panels pay for that.** The affected
+cells are enumerated in ``LOG_AXIS_DROPS_ZEROS`` and checked by
+``test_log_axis_drops_only_the_documented_zero_cells``, so the loss is recorded rather
+than silent, and a *newly* zero column cannot join them without the test failing.
 
 The decrement figures use symlog for the same reason plus one more: their values can go
 negative. ``test_scales_are_logarithmic_wherever_the_data_allows`` pins the rule, and a
@@ -82,23 +77,52 @@ STYLE: dict[str, dict] = {
     "pod_control": dict(color="#7f8c8d", marker="x", ls="--", label="POD (control)"),
 }
 
+#: Cells that a log axis silently discards, and what each zero means.
+#:
+#: Log scales are the requested default, and a log axis has no coordinate for 0 -- those
+#: points are dropped with no marker, no gap, no warning. That is acceptable only while it
+#: is known, so the cost is written down here and asserted against the produced CSVs. A
+#: series that is zero *everywhere* disappears from its panel completely and reads as
+#: "not measured", which is why NMF's entry matters most: it is the whole method.
+#:
+#: ``{(column, method): (n_zero_cells, meaning)}``
+LOG_AXIS_DROPS_ZEROS: dict[tuple[str, str], tuple[int, str]] = {
+    ("calls_total", "nmf_s0"): (
+        346, "NMF issues NO constrained solves -- its multiplicative updates are dense "
+             "linear algebra. Zero means the instrumentation sees no constrained work, "
+             "not that the method is free. Its entire series is absent from the panel; "
+             "read its cost from the report tables instead."),
+    ("cover_mean_err", "orthant"): (
+        15, "the orthant genuinely CONTAINS K_full at these cardinalities, so nothing is "
+            "missed. The 15 points are absent from the cover panel; the same fact is in "
+            "the CSV and in the per-dataset orthant figures."),
+    ("calls_total", "adg"): (
+        18, "R=1 and R=2 on all 9 datasets. ADG SEEDS its basis with the snapshot pair "
+            "at the largest mutual angle, found by an argmin over the Gram matrix of the "
+            "normalized snapshots -- dense linear algebra, no NNLS. A constrained solve "
+            "first appears at R=3, when candidates must be projected onto a cone with "
+            "two or more generators (min 25 calls). So these cells are not missing data: "
+            "ADG really is free there. The log axis drops them, which UNDERSTATES its "
+            "cost advantage at exactly the cardinalities where it is largest."),
+    ("calls_total", "adg_momentum"): (
+        18, "identical to adg: the stopping rule differs, the seeding does not, and at "
+            "matched cardinality no stopping rule applies."),
+}
+
 #: Cone-geometry panels: how much of ``span_+{all snapshots}`` a reduced cone captures,
 #: how wide it opens, and how far it reaches outside. See ``metrics.cone_geometry``.
 #: Both directions are shown, because neither implies the other: a cone can cover
 #: ``K_full`` perfectly while extending far beyond it, or sit strictly inside while
-#: missing most of it. Both use SYMLOG, for two different reasons. ``cover`` is *exactly*
-#: zero for the orthant in 15 cells -- it really does contain ``K_full`` -- and a log axis
-#: drops those points, making the baseline's defining property invisible in the very panel
-#: that measures it. ``excess`` is never exactly zero; for snapshot-spanned cones it is
-#: round-off (2.8e-17 to 5.5e-16) about a structural zero, which a log axis renders as
-#: thirteen decades of noise weighted equally with mCPG's real 0.26. symlog's linear band
-#: fixes both: it puts an exact zero on the axis and collapses the noise onto it. The
-#: other two panels are strictly positive and therefore plain log.
+#: missing most of it. ``excess`` uses SYMLOG: it is never exactly zero, but for
+#: snapshot-spanned cones it is round-off (2.8e-17 to 5.5e-16) about a structural zero,
+#: and a log axis would weight thirteen decades of that noise equally with mCPG's real
+#: 0.26. symlog's linear band collapses the noise onto zero where it belongs. The other
+#: three panels are log; ``cover`` loses the orthant's 15 exact zeros as a result, which
+#: is recorded in ``LOG_AXIS_DROPS_ZEROS`` rather than left to be discovered.
 CONE_PANELS = (
-    # symlog, not log: a cone can cover K_full EXACTLY -- the orthant does, in 15 cells --
-    # and a log axis drops those points, hiding "W+ contains K_full" in the very panel
-    # where it is the headline.
-    ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "symlog",
+    # log, with a known and accepted cost: the orthant covers K_full exactly in 15 cells
+    # and those points do not render. See LOG_AXIS_DROPS_ZEROS.
+    ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "log",
      "how much of the full cone is MISSED (too small)"),
     ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "symlog",
      "how much of the cone lies OUTSIDE (too large)"),
@@ -119,12 +143,10 @@ PANELS = (
     ("test_max_rel_err", "max relative projection error", "log", "precision (test set)"),
     ("gram_cond",        "Gram condition number",         "log", "conditioning"),
     ("e_orth_mean",      "mean $e_{orth}$",               "log", "orthogonality (Eq. 41)"),
-    # symlog, not log: this counts CONSTRAINED solves, and NMF issues none -- its
-    # multiplicative updates are dense linear algebra. On a log axis all 346 of its cells
-    # were dropped and the method vanished from the panel entirely, reading as "not
-    # measured" rather than "no constrained solves". Zero here means the instrumentation
-    # does not see this method's work, NOT that the method is free.
-    ("calls_total",      "constrained solver calls",      "symlog", "offline cost"),
+    # log, with a known and accepted cost: NMF issues no constrained solves, so all 346
+    # of its cells are exactly 0 and it does not render on this axis at all. See
+    # LOG_AXIS_DROPS_ZEROS.
+    ("calls_total",      "constrained solver calls",      "log", "offline cost"),
 )
 
 

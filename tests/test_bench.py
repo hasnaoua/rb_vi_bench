@@ -1409,29 +1409,28 @@ def test_scales_are_logarithmic_wherever_the_data_allows():
 
     scales = {c: sc for c, _y, sc, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS}
     for column in ("test_max_rel_err", "gram_cond", "e_orth_mean", "cone_hausdorff",
-                   "aperture_mean_deg", "test_max_rel_err_persnap"):
+                   "aperture_mean_deg", "test_max_rel_err_persnap",
+                   "cover_mean_err", "calls_total"):
         assert scales[column] == "log", (column, scales[column])
-    # cover and calls_total are EXACTLY zero for some method, and a log axis drops those
-    # points without a trace -- turning a result into an apparent gap in the data.
-    #   cover:       exactly 0 for the orthant, which really does contain K_full
-    #   calls_total: exactly 0 for NMF, which issues no CONSTRAINED solves
-    # excess is symlog for a different reason: it is never exactly zero, but for cones
-    # spanned by snapshots it is round-off (~1e-16) about a structural zero, and a log
-    # axis would weight that noise equally with mCPG's real 0.26 excess.
-    for column in ("excess_mean_err", "cover_mean_err", "calls_total"):
-        assert scales[column] == "symlog", (column, scales[column])
+    # excess is the one exception. It is never exactly zero, but for cones spanned by
+    # snapshots it is round-off (~1e-16) about a structural zero, and a log axis would
+    # weight thirteen decades of that noise equally with mCPG's real 0.26 excess.
+    assert scales["excess_mean_err"] == "symlog"
 
 
 @pytest.mark.parametrize("grid", ["grid.csv", "sweep_dense/grid.csv"])
-def test_no_log_panel_silently_drops_a_zero_valued_cell(grid):
-    """The rule above, checked against what the run actually produced.
+def test_log_axis_drops_only_the_documented_zero_cells(grid):
+    """Log scales are the requested default; this keeps their cost from going silent.
 
-    The static test pins today's three columns; this one catches the next one. A log
-    axis cannot render 0, so any panel whose column is zero somewhere in the results is
-    dropping real measurements -- and a method that is zero *everywhere* disappears from
-    the panel entirely, which reads as "not measured" rather than as the finding it is.
+    A log axis has no coordinate for 0, so those cells are discarded with no marker and
+    no gap. Two are known and accepted -- NMF's constrained-solve count and the orthant's
+    exact cover -- and both are written down in ``LOG_AXIS_DROPS_ZEROS`` with what the
+    zero means. This asserts the ledger against what the run actually produced, in both
+    directions: a NEW zero-valued series cannot start disappearing from a log panel
+    unnoticed, and an entry that stops being zero cannot linger as a stale warning.
     """
-    from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
+    from bench.figures import (CONE_PANELS, EXTRA_SPLIT_PANELS, LOG_AXIS_DROPS_ZEROS,
+                               PANELS)
     from bench.tabular import num, read_rows
 
     path = _paths.ROOT / "results" / grid
@@ -1439,11 +1438,21 @@ def test_no_log_panel_silently_drops_a_zero_valued_cell(grid):
         pytest.skip(f"{path} not present; run bench.runner first")
 
     rows = [r for r in read_rows(path) if not r.get("skip_reason")]
-    for column, _y, scale, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS:
-        if scale != "log":
-            continue
-        zeros = {r["method"] for r in rows if num(r, column) == 0.0}
-        assert not zeros, f"{column} is on a log axis but is 0 for {sorted(zeros)}"
+    found = {
+        (column, method)
+        for column, _y, scale, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS
+        if scale == "log"
+        for method in {r["method"] for r in rows if num(r, column) == 0.0}
+    }
+    undocumented = found - set(LOG_AXIS_DROPS_ZEROS)
+    assert not undocumented, (
+        f"{sorted(undocumented)} vanish from a log panel and are not in "
+        "LOG_AXIS_DROPS_ZEROS -- document what the zero means or use symlog"
+    )
+    # The dense sweep is the grid the figures are drawn from, so it must exercise every
+    # documented entry; the coarser main grid need only be a subset.
+    if grid.startswith("sweep_dense"):
+        assert found == set(LOG_AXIS_DROPS_ZEROS), "stale LOG_AXIS_DROPS_ZEROS entry"
 
 
 def test_axial_profile_matches_the_publication_reduction():
