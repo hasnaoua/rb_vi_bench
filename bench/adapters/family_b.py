@@ -167,6 +167,27 @@ def fit_greedy_adg(dataset, *, delta=None, R=None, normalize_snapshots=True) -> 
     variant, kept only to show what the shared-threshold stopping rule costs.
     """
     label = "adg" if normalize_snapshots else "adg_raw"
+    if R is not None and int(R) < 2:
+        # ADG has no R=1 state. Its initialization selects the PAIR of snapshots at the
+        # largest mutual angle (``AngularDefectGreedy._init_basis``), so its first
+        # iteration emits two generators and its trajectory is R = 2, 3, 4, ...
+        #
+        # ``fit_angle_fixed_components`` does answer R=1, via an explicit
+        # ``components == 1`` branch that returns the largest-norm snapshot instead. That
+        # is a different selection rule, and the point it produces is not the first step
+        # of the curve drawn beside it: on gaussian_synth and membrane_2d the snapshot it
+        # picks is not in the pair the algorithm starts from. It coincides on the other
+        # datasets only by luck -- when the max-norm snapshot happens to fall in that pair
+        # -- which is what made the discrepancy easy to miss.
+        #
+        # Reporting it would put one point of a different algorithm at the left end of
+        # every ADG curve, so the cell is skipped instead. R >= 2 is a genuine prefix
+        # chain, verified across every dataset by
+        # ``test_refitting_per_R_equals_one_greedy_run_truncated``.
+        raise ValueError(
+            "ADG initializes with the largest-mutual-angle PAIR, so R=1 is not a state "
+            "on its trajectory; its cardinalities start at 2"
+        )
     if R is not None:
         generators, selected, seconds, counts = _fit_to_cardinality(
             fit_angle_fixed_components,

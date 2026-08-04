@@ -1608,6 +1608,92 @@ def _basis_of(dataset, generators):
     )
 
 
+@pytest.mark.parametrize("key", ["toy_bee20", "obstacle_ndee22", "fem_lambda",
+                                 "gaussian_synth", "hertz_2d"])
+def test_refitting_per_R_equals_one_greedy_run_truncated(key):
+    """The cardinality sweep must simulate ONE greedy observed at each iteration.
+
+    The runner fits afresh for every R, which is only legitimate if a greedy stopped at R
+    produces exactly the first R generators it would have produced running further. For a
+    deterministic greedy that is true -- each iteration appends to the cone it already has
+    and never revisits -- so the sweep really is one run observed step by step, and the
+    curves are the algorithm's own trajectory rather than a sequence of unrelated bases.
+
+    Nothing checked it, and it is the assumption the whole matched-cardinality comparison
+    rests on. If an implementation ever reorders its selections when given a larger budget
+    -- a lookahead, a restart, a global re-selection -- every cardinality figure silently
+    becomes a plot of unrelated runs, and this is what would catch it.
+
+    NMF is excluded because it genuinely does not have the property: it is refitted from
+    scratch at each R and its atoms are optimized rather than accumulated, so its bases at
+    successive R are unrelated. That is the drawback [BEE20] §5 raises against it, not a
+    defect here, and the extent and decrement figures both show its consequences.
+    """
+    ds = ds_mod.load(key)
+    R_max = min(12, ds.train().shape[1])
+    for method in ("cpg_bee20", "mcpg_ndee22", "adg", "adg_momentum", "orthant"):
+        full = METHODS[method].fit(ds, R=R_max).generators
+        # ADG's trajectory starts at 2: its initialization emits the largest-mutual-angle
+        # PAIR, so there is no R=1 state. See test_adg_has_no_R1_state.
+        start = 2 if method.startswith("adg") else 1
+        for k in range(start, full.shape[1] + 1):
+            part = METHODS[method].fit(ds, R=k).generators
+            assert part.shape[1] == k, (method, k, part.shape)
+            assert np.allclose(part, full[:, :k], atol=1e-10), (
+                f"{key}/{method}: fitting to R={k} does not reproduce the first {k} "
+                f"generators of the run to R={R_max}; the cardinality sweep is not one "
+                "greedy trajectory"
+            )
+
+
+def test_adg_has_no_R1_state_and_refuses_to_invent_one():
+    """ADG's first iteration emits TWO generators, so R=1 is off its trajectory.
+
+    AngularDefectGreedy initializes from the pair of snapshots at the largest mutual
+    angle, so its cardinalities run 2, 3, 4, ... The upstream fixed-component helper
+    answers R=1 anyway, through a separate `components == 1` branch returning the
+    largest-norm snapshot -- a different selection rule. On gaussian_synth and
+    membrane_2d that snapshot is not in the initialization pair, so the R=1 point was not
+    the first step of the curve drawn beside it; on the other datasets it coincides only
+    because the max-norm snapshot happens to fall in the pair, which is why the
+    discrepancy survived unnoticed.
+
+    The adapter refuses R=1 rather than reporting a point from a different rule.
+    """
+    ds = ds_mod.load("gaussian_synth")
+    for method in ("adg", "adg_momentum", "adg_raw"):
+        with pytest.raises(ValueError, match="not a state on its trajectory"):
+            METHODS[method].fit(ds, R=1)
+
+    # The upstream branch that produced it still exists and still disagrees -- this is
+    # what the adapter is shielding the benchmark from, not a hypothetical.
+    from greedy.pipelines.component_sweep import fit_angle_fixed_components
+
+    rows = np.ascontiguousarray(ds.train().T)
+    one, idx_one, _ = fit_angle_fixed_components(rows, 1, zero_tol=1e-12)
+    _two, idx_two, _ = fit_angle_fixed_components(rows, 2, zero_tol=1e-12)
+    assert idx_one[0] not in idx_two, "the two rules agree here; pick another dataset"
+
+
+def test_conditioning_axis_is_bounded_at_numerical_singularity():
+    """Past 1/eps the condition number is round-off, and must not set the axis.
+
+    On Half-disks of Hertz the Gram goes numerically singular at R=17 for CPG and ADG.
+    Beyond that the values wander between 1e16 and 1e19 with no order, and one 4.59e19
+    sample at R=22 was compressing the meaningful range -- R=2..16, rising smoothly from
+    4.0e2 to 3.1e13 -- into a flat line at zero. The ceiling bounds the AXIS only: the
+    points are still plotted and still in the CSV.
+    """
+    from bench.figures import NUMERICAL_CEILING
+
+    assert NUMERICAL_CEILING["gram_cond"] == pytest.approx(1.0 / np.finfo(float).eps)
+    # Every other panel is unbounded; a ceiling is a claim about numerics, not a style.
+    from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
+    for column, _y, _s, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS:
+        if column != "gram_cond":
+            assert column not in NUMERICAL_CEILING, column
+
+
 def test_every_axis_is_linear():
     """No panel transforms its values, so a figure can be read against the CSV directly.
 

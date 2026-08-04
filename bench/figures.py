@@ -54,6 +54,7 @@ from pathlib import Path
 from . import _paths  # noqa: F401  -- forces the Agg backend before pyplot is imported
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 from . import layout
 from .tabular import num as _num, read_rows
@@ -121,6 +122,23 @@ EXTRA_SPLIT_PANELS = (
      "precision, each snapshot vs ITS OWN norm"),
 )
 
+#: Values a column cannot meaningfully exceed, used to bound the AXIS rather than to
+#: alter any datum. Nothing is dropped or transformed: points above the ceiling still
+#: plot, they simply clip at the top of the axis, and the ceiling is drawn as a marked
+#: line so a reader can see that is what happened.
+#:
+#: ``gram_cond`` is the case. Above ``1/eps`` the Gram matrix is numerically singular and
+#: the returned condition number is round-off, not a measurement. On Half-disks of Hertz
+#: the matrix crosses that line at R=17 for CPG and ADG, R=18 for NMF and R=19 for mCPG,
+#: and the values beyond it wander between 1e16 and 1e19 with no order to them. Letting
+#: them set the axis is what broke this panel: a single 4.59e19 sample at R=22 compressed
+#: the entire meaningful range -- R=2..16, rising smoothly from 4.0e2 to 3.1e13 -- into a
+#: flat line at zero, so the figure showed one noise spike and nothing else. The
+#: conditioning worth reading is the conditioning before the basis goes singular.
+NUMERICAL_CEILING: dict[str, float] = {
+    "gram_cond": 1.0 / np.finfo(float).eps,
+}
+
 PANELS = (
     ("test_max_rel_err", "max relative projection error", "linear", "precision (test set)"),
     ("gram_cond",        "Gram condition number",         "linear", "conditioning"),
@@ -187,6 +205,7 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
     everything, but alone they are perfectly readable.
     """
     plotted = 0
+    primary_xy: list[tuple[float, float]] = []
     primary: list[float] = []
     if only is not None:
         series = {m: p for m, p in series.items() if m in only}
@@ -206,6 +225,7 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
                 color=style["color"], marker=style["marker"], ls=style["ls"],
                 label=style["label"], ms=4, lw=1.4, alpha=0.9)
         primary.extend(g[1] for g in good)
+        primary_xy.extend(good)
         plotted += 1
         if dashed_train:
             yt = [_num(row, "train_max_rel_err") for _, row in points]
@@ -218,10 +238,26 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
     # overlay is a reference, not the subject: it reaches numerical zero as soon as the
     # cone contains every training snapshot, and letting it drive the limits compresses
     # the curves actually being compared. Train lines clip rather than rescale the axis.
+    ceiling = NUMERICAL_CEILING.get(column)
     if primary:
-        lo, hi = min(primary), max(primary)
+        usable = [v for v in primary if ceiling is None or v <= ceiling] or primary
+        lo, hi = min(usable), max(usable)
         pad = (hi - lo) * 0.05 or (abs(hi) * 0.05 or 1.0)
         ax.set_ylim(lo - pad, hi + pad)
+    # Mark the singular region along x, not with a line at the ceiling's y. The ceiling is
+    # far above the meaningful range (4.5e15 against a usable max of 3.1e13 on Half-disks
+    # of Hertz), so an axhline there would either re-inflate the axis it exists to bound
+    # or -- placed outside ylim with bbox_inches="tight" -- expand the canvas to reach it,
+    # which is exactly how this first went wrong: a 342-billion-pixel figure. Shading the
+    # cardinalities instead says the more useful thing anyway: past this R the basis is
+    # numerically singular and the curve beyond is round-off.
+    if ceiling is not None and primary_xy and max(y for _x, y in primary_xy) > ceiling:
+        x0 = min(x for x, y in primary_xy if y > ceiling)
+        ax.axvspan(x0, max(x for x, _y in primary_xy), color="#b03a2e", alpha=0.07,
+                   lw=0, zorder=0)
+        ax.text(x0, 0.97, f"  numerically singular (R ≥ {x0:g})", color="#b03a2e",
+                fontsize=6.5, ha="left", va="top", clip_on=True,
+                transform=ax.get_xaxis_transform())
     ax.set_xlabel("cardinality $R$")
     ax.set_ylabel(ylabel)
     ax.set_title(title, fontsize=10)
