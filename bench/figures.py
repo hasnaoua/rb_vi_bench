@@ -11,7 +11,9 @@ comparison that does not exist. At matched cardinality every method is handed th
 Four comparison panels per dataset, one line per method:
 
 * **precision** -- test (solid) and train (dashed) max relative projection error.
-* **conditioning** -- Gram condition number, log scale. Undefined below R=2.
+* **conditioning** -- Gram condition number, log scale (the one exception to the linear
+  rule). Undefined below R=2, and numerically meaningless once the Gram goes singular,
+  which the panel shades.
 * **orthogonality** -- ``e_orth`` ([NDEE22] Eq. 41), bounded by 1; higher is a wider cone.
 * **offline cost** -- total constrained-solver calls. Machine-independent, unlike
   wall-clock -- but it counts *constrained* solves only, so NMF sits at exactly 0 and
@@ -40,8 +42,17 @@ points (0 solves on all 9 datasets -- it seeds from a Gram-matrix argmin, and NN
 appears at R=3), and the 15 cells where the orthant covers ``K_full`` exactly. All of
 those now plot on the zero line, where they belong.
 
-``test_every_axis_is_linear`` pins this, so a transformation cannot be reintroduced on
-one panel without the rule being restated deliberately.
+**One documented exception: conditioning.** A condition number is >= 1 by definition, so
+the zero-dropping failure that motivates the rule cannot occur for it -- across both
+grids its 2429 values have minimum exactly 1. And it needs the axis: it spans eleven
+decades (4.0e2 to 3.1e13 on Half-disks of Hertz) before the basis even goes singular, so
+on a linear axis the whole meaningful range collapses onto zero. See
+``LOG_AXIS_EXCEPTIONS``.
+
+``test_axes_are_linear_except_the_documented_exception`` pins this, so a transformation
+cannot be reintroduced on any other panel without the rule being restated deliberately,
+and ``test_zero_valued_cells_are_plotted_not_dropped`` checks against the produced CSVs
+that no column with exact zeros ever lands on a log axis.
 """
 
 from __future__ import annotations
@@ -122,6 +133,19 @@ EXTRA_SPLIT_PANELS = (
      "precision, each snapshot vs ITS OWN norm"),
 )
 
+#: The single column plotted on a log axis, and why it earns the exception.
+#:
+#: Every other panel is linear, because a log axis has no coordinate for zero and drops
+#: such points with no marker -- which had silently removed whole series. ``gram_cond``
+#: cannot hit that failure: a condition number is >= 1 by definition, and across both
+#: grids its 2429 values have minimum exactly 1 and none <= 0. So nothing is lost here,
+#: and what is gained is the panel itself. Conditioning spans 4.0e2 to 3.1e13 over
+#: R=2..16 on Half-disks of Hertz -- eleven decades before the basis even goes singular --
+#: and on a linear axis everything under about 1e12 is pressed flat against zero, leaving
+#: a panel that shows one late excursion and nothing else. It is the one quantity in this
+#: benchmark that is logarithmic by nature.
+LOG_AXIS_EXCEPTIONS: frozenset[str] = frozenset({"gram_cond"})
+
 #: Values a column cannot meaningfully exceed, used to bound the AXIS rather than to
 #: alter any datum. Nothing is dropped or transformed: points above the ceiling still
 #: plot, they simply clip at the top of the axis, and the ceiling is drawn as a marked
@@ -141,7 +165,8 @@ NUMERICAL_CEILING: dict[str, float] = {
 
 PANELS = (
     ("test_max_rel_err", "max relative projection error", "linear", "precision (test set)"),
-    ("gram_cond",        "Gram condition number",         "linear", "conditioning"),
+    # The ONE log axis. See LOG_AXIS_EXCEPTIONS.
+    ("gram_cond",        "Gram condition number",         "log",    "conditioning"),
     ("e_orth_mean",      "mean $e_{orth}$",               "linear", "orthogonality (Eq. 41)"),
     ("calls_total",      "constrained solver calls",      "linear", "offline cost"),
 )
@@ -242,8 +267,12 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
     if primary:
         usable = [v for v in primary if ceiling is None or v <= ceiling] or primary
         lo, hi = min(usable), max(usable)
-        pad = (hi - lo) * 0.05 or (abs(hi) * 0.05 or 1.0)
-        ax.set_ylim(lo - pad, hi + pad)
+        if yscale == "log":
+            # Multiplicative headroom: lo - pad would be <= 0 and unrenderable.
+            ax.set_ylim(max(lo, 1e-300) / 2.0, hi * 2.0)
+        else:
+            pad = (hi - lo) * 0.05 or (abs(hi) * 0.05 or 1.0)
+            ax.set_ylim(lo - pad, hi + pad)
     # Mark the singular region along x, not with a line at the ceiling's y. The ceiling is
     # far above the meaningful range (4.5e15 against a usable max of 3.1e13 on Half-disks
     # of Hertz), so an axhline there would either re-inflate the axis it exists to bound

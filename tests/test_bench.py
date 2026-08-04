@@ -1694,24 +1694,48 @@ def test_conditioning_axis_is_bounded_at_numerical_singularity():
             assert column not in NUMERICAL_CEILING, column
 
 
-def test_every_axis_is_linear():
-    """No panel transforms its values, so a figure can be read against the CSV directly.
+def test_axes_are_linear_except_the_documented_exception():
+    """No panel transforms its values, apart from conditioning, which earns it.
 
-    Log and symlog axes were used here before, and dropping them has a real cost: several
-    of these columns span decades, and on a linear axis the small values are pressed
-    against the baseline where differences between good methods cannot be resolved by
-    eye. Those comparisons belong to report.txt, which carries full precision.
+    The rule exists because a log axis has no coordinate for zero and discards such cells
+    with no marker -- that had silently removed NMF's entire offline-cost series, ADG's
+    cheapest cardinalities, and every cell where the orthant covers K_full exactly.
 
-    What a linear axis buys is that nothing vanishes. A log axis has no coordinate for
-    zero and discards such cells with no marker and no gap, which previously removed
-    NMF's entire offline-cost series (0 constrained solves in all 346 of its cells),
-    ADG's R=1 and R=2 points (it seeds from a Gram-matrix argmin; NNLS first appears at
-    R=3), and the 15 cells where the orthant covers K_full exactly.
+    gram_cond cannot hit that failure: a condition number is >= 1 by definition. And it
+    needs the axis more than any other column, spanning eleven decades before the basis
+    goes singular, which on a linear axis collapses the whole meaningful range onto zero.
+    The exception is a set of one, and this test is what keeps it that size.
     """
-    from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
+    from bench.figures import (CONE_PANELS, EXTRA_SPLIT_PANELS, LOG_AXIS_EXCEPTIONS,
+                               PANELS)
 
+    assert LOG_AXIS_EXCEPTIONS == frozenset({"gram_cond"})
     for column, _ylabel, scale, _title in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS:
-        assert scale == "linear", f"{column} applies a {scale} transformation"
+        expected = "log" if column in LOG_AXIS_EXCEPTIONS else "linear"
+        assert scale == expected, (column, scale)
+
+
+@pytest.mark.parametrize("grid", ["grid.csv", "sweep_dense/grid.csv"])
+def test_the_log_exception_column_is_strictly_positive(grid):
+    """The exception is only safe while gram_cond never reaches zero. Checked, not assumed.
+
+    If a degenerate basis ever reported a condition number of 0 -- or the column were
+    redefined -- the point would vanish from the panel with no marker, which is the exact
+    failure the linear rule was adopted to prevent.
+    """
+    from bench.figures import LOG_AXIS_EXCEPTIONS
+    from bench.tabular import num, read_rows
+
+    path = _paths.ROOT / "results" / grid
+    if not path.is_file():
+        pytest.skip(f"{path} not present; run bench.runner first")
+
+    rows = [r for r in read_rows(path) if not r.get("skip_reason")]
+    for column in LOG_AXIS_EXCEPTIONS:
+        vals = [num(r, column) for r in rows]
+        vals = [v for v in vals if not math.isnan(v)]
+        assert vals, f"{column} has no values in {grid}"
+        assert min(vals) > 0, f"{column} reaches {min(vals)}, unrenderable on a log axis"
 
 
 @pytest.mark.parametrize("grid", ["grid.csv", "sweep_dense/grid.csv"])
