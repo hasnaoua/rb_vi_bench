@@ -24,22 +24,24 @@ their own figure per dataset (``reference_orthant.png``, and one panel per metri
 ``<dataset>/orthant/`` with ``--split``) carrying every panel the comparison figures do.
 Alone on their own axes there is no shared range to protect.
 
-**Scales are logarithmic.** Every panel here is log except ``excess``, which is symlog:
-it is never literally zero, but for snapshot-spanned cones it is round-off (2.8e-17 to
-5.5e-16) about a structural zero, and on a log axis thirteen decades of that noise would
-carry the same visual weight as mCPG's real 0.26 excess. symlog's linear band collapses
-the noise onto zero and leaves the genuine excursions legible; the decrement figures use
-symlog for that reason plus one more, since their values can go negative.
+**Every axis is linear. No transformation is applied to any plotted value.** Values
+appear at the coordinate the data puts them, which is the only way the figures can be
+read against the CSVs and the report tables without a mental inverse.
 
-**A log axis cannot render an exact zero, and two panels pay for that.** The affected
-cells are enumerated in ``LOG_AXIS_DROPS_ZEROS`` and checked by
-``test_log_axis_drops_only_the_documented_zero_cells``, so the loss is recorded rather
-than silent, and a *newly* zero column cannot join them without the test failing.
+The cost is real and worth stating: several of these columns span many orders of
+magnitude, so on a linear axis the small values are pressed against the baseline and
+differences between well-performing methods are not resolvable by eye. Those comparisons
+have to be made from ``report.txt`` or the CSVs, which carry full precision.
 
-The decrement figures use symlog for the same reason plus one more: their values can go
-negative. ``test_scales_are_logarithmic_wherever_the_data_allows`` pins the rule, and a
-companion test re-checks it against the produced CSVs so a newly-zero column cannot slip
-onto a log axis unnoticed.
+The benefit is that nothing is silently dropped. A log axis has no coordinate for zero
+and discards such points with no marker and no gap, which previously removed NMF's entire
+offline-cost series (0 constrained solves in all 346 of its cells), ADG's R=1 and R=2
+points (0 solves on all 9 datasets -- it seeds from a Gram-matrix argmin, and NNLS first
+appears at R=3), and the 15 cells where the orthant covers ``K_full`` exactly. All of
+those now plot on the zero line, where they belong.
+
+``test_every_axis_is_linear`` pins this, so a transformation cannot be reintroduced on
+one panel without the rule being restated deliberately.
 """
 
 from __future__ import annotations
@@ -77,76 +79,42 @@ STYLE: dict[str, dict] = {
     "pod_control": dict(color="#7f8c8d", marker="x", ls="--", label="POD (control)"),
 }
 
-#: Cells that a log axis silently discards, and what each zero means.
-#:
-#: Log scales are the requested default, and a log axis has no coordinate for 0 -- those
-#: points are dropped with no marker, no gap, no warning. That is acceptable only while it
-#: is known, so the cost is written down here and asserted against the produced CSVs. A
-#: series that is zero *everywhere* disappears from its panel completely and reads as
-#: "not measured", which is why NMF's entry matters most: it is the whole method.
-#:
-#: ``{(column, method): (n_zero_cells, meaning)}``
-LOG_AXIS_DROPS_ZEROS: dict[tuple[str, str], tuple[int, str]] = {
-    ("calls_total", "nmf_s0"): (
-        346, "NMF issues NO constrained solves -- its multiplicative updates are dense "
-             "linear algebra. Zero means the instrumentation sees no constrained work, "
-             "not that the method is free. Its entire series is absent from the panel; "
-             "read its cost from the report tables instead."),
-    ("cover_mean_err", "orthant"): (
-        15, "the orthant genuinely CONTAINS K_full at these cardinalities, so nothing is "
-            "missed. The 15 points are absent from the cover panel; the same fact is in "
-            "the CSV and in the per-dataset orthant figures."),
-    ("calls_total", "adg"): (
-        18, "R=1 and R=2 on all 9 datasets. ADG SEEDS its basis with the snapshot pair "
-            "at the largest mutual angle, found by an argmin over the Gram matrix of the "
-            "normalized snapshots -- dense linear algebra, no NNLS. A constrained solve "
-            "first appears at R=3, when candidates must be projected onto a cone with "
-            "two or more generators (min 25 calls). So these cells are not missing data: "
-            "ADG really is free there. The log axis drops them, which UNDERSTATES its "
-            "cost advantage at exactly the cardinalities where it is largest."),
-    ("calls_total", "adg_momentum"): (
-        18, "identical to adg: the stopping rule differs, the seeding does not, and at "
-            "matched cardinality no stopping rule applies."),
-}
-
 #: Cone-geometry panels: how much of ``span_+{all snapshots}`` a reduced cone captures,
 #: how wide it opens, and how far it reaches outside. See ``metrics.cone_geometry``.
 #: Both directions are shown, because neither implies the other: a cone can cover
 #: ``K_full`` perfectly while extending far beyond it, or sit strictly inside while
-#: missing most of it. ``excess`` uses SYMLOG: it is never exactly zero, but for
-#: snapshot-spanned cones it is round-off (2.8e-17 to 5.5e-16) about a structural zero,
-#: and a log axis would weight thirteen decades of that noise equally with mCPG's real
-#: 0.26. symlog's linear band collapses the noise onto zero where it belongs. The other
-#: three panels are log; ``cover`` loses the orthant's 15 exact zeros as a result, which
-#: is recorded in ``LOG_AXIS_DROPS_ZEROS`` rather than left to be discovered.
+#: missing most of it. All four are linear. One consequence to read correctly: for cones
+#: spanned by snapshots ``excess`` is round-off (2.8e-17 to 5.5e-16) about a structural
+#: zero -- such a cone cannot leave ``K_full`` -- so those curves sit flat on the axis at
+#: what is effectively 0, and only mCPG's genuine excursion (up to 0.26) lifts off it.
 CONE_PANELS = (
     # log, with a known and accepted cost: the orthant covers K_full exactly in 15 cells
     # and those points do not render. See LOG_AXIS_DROPS_ZEROS.
-    ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "log",
+    ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "linear",
      "how much of the full cone is MISSED (too small)"),
-    ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "symlog",
+    ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "linear",
      "how much of the cone lies OUTSIDE (too large)"),
-    ("cone_hausdorff",    "two-sided distance",                "log",
+    ("cone_hausdorff",    "two-sided distance",                "linear",
      r"$\max$(missed, excess) — 0 iff the cones coincide"),
-    ("aperture_mean_deg", "mean pairwise angle [deg]",         "log",
+    ("aperture_mean_deg", "mean pairwise angle [deg]",         "linear",
      "aperture (how wide the cone opens)"),
 )
 
 #: Extra split figures, written only by ``--split``. Kept out of ``PANELS`` so the
 #: four-panel layout stays a 2x2 grid.
 EXTRA_SPLIT_PANELS = (
-    ("test_max_rel_err_persnap", "max per-snapshot relative error", "log",
+    ("test_max_rel_err_persnap", "max per-snapshot relative error", "linear",
      "precision, each snapshot vs ITS OWN norm"),
 )
 
 PANELS = (
-    ("test_max_rel_err", "max relative projection error", "log", "precision (test set)"),
-    ("gram_cond",        "Gram condition number",         "log", "conditioning"),
-    ("e_orth_mean",      "mean $e_{orth}$",               "log", "orthogonality (Eq. 41)"),
+    ("test_max_rel_err", "max relative projection error", "linear", "precision (test set)"),
+    ("gram_cond",        "Gram condition number",         "linear", "conditioning"),
+    ("e_orth_mean",      "mean $e_{orth}$",               "linear", "orthogonality (Eq. 41)"),
     # log, with a known and accepted cost: NMF issues no constrained solves, so all 346
     # of its cells are exactly 0 and it does not render on this axis at all. See
     # LOG_AXIS_DROPS_ZEROS.
-    ("calls_total",      "constrained solver calls",      "log", "offline cost"),
+    ("calls_total",      "constrained solver calls",      "linear", "offline cost"),
 )
 
 
@@ -217,8 +185,10 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
         style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
         xs = [R for R, _ in points]
         ys = [_num(row, column) for _, row in points]
-        good = [(x, y) for x, y in zip(xs, ys)
-                if not math.isnan(y) and (yscale != "log" or y > 0)]
+        # Only missing values are dropped. Zeros and negatives plot where they fall --
+        # on a linear axis they are ordinary coordinates, and dropping them would hide
+        # real results (NMF issues 0 constrained solves; ADG issues 0 at R=1 and R=2).
+        good = [(x, y) for x, y in zip(xs, ys) if not math.isnan(y)]
         if not good:
             continue
         ax.plot([g[0] for g in good], [g[1] for g in good],
@@ -228,25 +198,19 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
         plotted += 1
         if dashed_train:
             yt = [_num(row, "train_max_rel_err") for _, row in points]
-            gt = [(x, y) for x, y in zip(xs, yt) if not math.isnan(y) and y > 0]
+            gt = [(x, y) for x, y in zip(xs, yt) if not math.isnan(y)]
             if gt:
                 ax.plot([g[0] for g in gt], [g[1] for g in gt],
                         color=style["color"], ls=":", lw=0.9, alpha=0.45)
-    if yscale == "symlog":
-        # Linear band two decades below the largest value: keeps exact zeros on the axis
-        # while letting the decades above be read.
-        mags = [abs(v) for v in primary if v != 0]
-        ax.set_yscale("symlog", linthresh=(max(mags) * 1e-2) if mags else 1e-12)
-    else:
-        ax.set_yscale(yscale)
-    # Scale to the primary (test) series. The train overlay reaches machine zero as soon
-    # as the cone contains every training snapshot, and on a log axis that single
-    # excursion to 1e-16 squeezes every curve worth comparing into a band at the top.
-    # Train lines simply clip below the floor.
-    if primary and yscale == "log":
+    ax.set_yscale(yscale)
+    # Scale to the primary (test) series, with a little headroom. The dashed train
+    # overlay is a reference, not the subject: it reaches numerical zero as soon as the
+    # cone contains every training snapshot, and letting it drive the limits compresses
+    # the curves actually being compared. Train lines clip rather than rescale the axis.
+    if primary:
         lo, hi = min(primary), max(primary)
-        if lo > 0:
-            ax.set_ylim(lo / 3.0, hi * 3.0)
+        pad = (hi - lo) * 0.05 or (abs(hi) * 0.05 or 1.0)
+        ax.set_ylim(lo - pad, hi + pad)
     ax.set_xlabel("cardinality $R$")
     ax.set_ylabel(ylabel)
     ax.set_title(title, fontsize=10)
@@ -443,7 +407,7 @@ def figure_precision_overview(all_series, out_dir: Path) -> Path:
     for ax, name in zip(axes.ravel(), names):
         col, _title = error_column(all_series[name])
         suffix = "" if col == "test_max_rel_err" else "  (train — no split)"
-        _panel(ax, all_series[name], col, "max rel. error", "log", name + suffix)
+        _panel(ax, all_series[name], col, "max rel. error", "linear", name + suffix)
     for ax in axes.ravel()[len(names):]:
         ax.axis("off")
 

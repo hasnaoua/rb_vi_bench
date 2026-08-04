@@ -664,13 +664,23 @@ def test_decrement_skips_non_consecutive_cardinalities():
     assert ys == pytest.approx([0.1 / 0.5, 0.05 / 0.4, 0.01 / 0.2])
 
 
-def test_decrement_symlog_band_is_relative_to_the_largest_step():
-    """Anchoring the linear band to the smallest step puts it at the float-noise floor."""
-    from bench.decrement import _symlog_threshold
+def test_decrement_axes_are_linear():
+    """The decrement plots its fractions untransformed, like every other axis here.
 
-    assert _symlog_threshold([-1e-2, -1e-3, -1e-16, 0.0]) == pytest.approx(1e-4)
-    assert _symlog_threshold([]) > 0
-    assert _symlog_threshold([0.0, 0.0]) > 0
+    This was symlog, with a linear band sized two decades below the largest step. That
+    band existed to keep exact zeros on a log axis and to stop round-off on a plateaued
+    curve from reading as full-height excursions. A linear axis needs neither: zero is an
+    ordinary coordinate, and negative decrements -- NMF going backwards, since it is
+    refitted from scratch at each R -- plot where they fall.
+    """
+    import inspect
+
+    from bench import decrement
+
+    assert not hasattr(decrement, "_symlog_threshold")
+    src = inspect.getsource(decrement._draw)
+    assert "symlog" not in src
+    assert 'ax.set_yscale' not in src, "the y-axis is left at its linear default"
 
 
 def test_decrement_figures_render(tmp_path, bumps):
@@ -767,7 +777,6 @@ def test_physics_reshape_matches_the_repository_convention():
     ds = ds_mod.load("physics")
     geom = ds.geometry
     assert geom.kind == "grid" and geom.shape == (76, 101)
-    assert geom.log, "contact pressures span decades; a linear scale saturates"
 
     v = ds.snapshots[:, 0]
     assert np.array_equal(geometry.as_surface(v, geom), reshape_contact_surface(v))
@@ -1397,40 +1406,36 @@ def test_reference_baseline_gets_its_own_figure(tmp_path, bumps):
     assert "orthant" in figures.FIGURE_EXCLUDED
 
 
-def test_scales_are_logarithmic_wherever_the_data_allows():
-    """Log where values are strictly positive; symlog only where zeros/negatives occur.
+def test_every_axis_is_linear():
+    """No panel transforms its values, so a figure can be read against the CSV directly.
 
-    e_orth lies in (0, 1] and aperture in (0, 90] -- both strictly positive, so both are
-    log. excess is exactly 0 for any method whose generators are snapshots, and the
-    decrement can go negative, so those two stay symlog: a plain log axis would silently
-    drop precisely the points worth seeing.
+    Log and symlog axes were used here before, and dropping them has a real cost: several
+    of these columns span decades, and on a linear axis the small values are pressed
+    against the baseline where differences between good methods cannot be resolved by
+    eye. Those comparisons belong to report.txt, which carries full precision.
+
+    What a linear axis buys is that nothing vanishes. A log axis has no coordinate for
+    zero and discards such cells with no marker and no gap, which previously removed
+    NMF's entire offline-cost series (0 constrained solves in all 346 of its cells),
+    ADG's R=1 and R=2 points (it seeds from a Gram-matrix argmin; NNLS first appears at
+    R=3), and the 15 cells where the orthant covers K_full exactly.
     """
     from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
 
-    scales = {c: sc for c, _y, sc, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS}
-    for column in ("test_max_rel_err", "gram_cond", "e_orth_mean", "cone_hausdorff",
-                   "aperture_mean_deg", "test_max_rel_err_persnap",
-                   "cover_mean_err", "calls_total"):
-        assert scales[column] == "log", (column, scales[column])
-    # excess is the one exception. It is never exactly zero, but for cones spanned by
-    # snapshots it is round-off (~1e-16) about a structural zero, and a log axis would
-    # weight thirteen decades of that noise equally with mCPG's real 0.26 excess.
-    assert scales["excess_mean_err"] == "symlog"
+    for column, _ylabel, scale, _title in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS:
+        assert scale == "linear", f"{column} applies a {scale} transformation"
 
 
 @pytest.mark.parametrize("grid", ["grid.csv", "sweep_dense/grid.csv"])
-def test_log_axis_drops_only_the_documented_zero_cells(grid):
-    """Log scales are the requested default; this keeps their cost from going silent.
+def test_zero_valued_cells_are_plotted_not_dropped(grid):
+    """The zeros a log axis used to discard must survive into the figure data.
 
-    A log axis has no coordinate for 0, so those cells are discarded with no marker and
-    no gap. Two are known and accepted -- NMF's constrained-solve count and the orthant's
-    exact cover -- and both are written down in ``LOG_AXIS_DROPS_ZEROS`` with what the
-    zero means. This asserts the ledger against what the run actually produced, in both
-    directions: a NEW zero-valued series cannot start disappearing from a log panel
-    unnoticed, and an entry that stops being zero cannot linger as a stale warning.
+    These are results, not gaps: NMF issues no constrained solves, ADG issues none at
+    its two smallest cardinalities, and the orthant misses nothing of K_full. Each was
+    invisible under a log scale. This asserts they are present in the CSVs and that the
+    panels carrying them are on an axis that can render a zero.
     """
-    from bench.figures import (CONE_PANELS, EXTRA_SPLIT_PANELS, LOG_AXIS_DROPS_ZEROS,
-                               PANELS)
+    from bench.figures import CONE_PANELS, EXTRA_SPLIT_PANELS, PANELS
     from bench.tabular import num, read_rows
 
     path = _paths.ROOT / "results" / grid
@@ -1438,21 +1443,19 @@ def test_log_axis_drops_only_the_documented_zero_cells(grid):
         pytest.skip(f"{path} not present; run bench.runner first")
 
     rows = [r for r in read_rows(path) if not r.get("skip_reason")]
-    found = {
-        (column, method)
-        for column, _y, scale, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS
-        if scale == "log"
-        for method in {r["method"] for r in rows if num(r, column) == 0.0}
+    scales = {c: sc for c, _y, sc, _t in PANELS + CONE_PANELS + EXTRA_SPLIT_PANELS}
+    zeros = {
+        (column, r["method"])
+        for column in scales
+        for r in rows
+        if num(r, column) == 0.0
     }
-    undocumented = found - set(LOG_AXIS_DROPS_ZEROS)
-    assert not undocumented, (
-        f"{sorted(undocumented)} vanish from a log panel and are not in "
-        "LOG_AXIS_DROPS_ZEROS -- document what the zero means or use symlog"
-    )
-    # The dense sweep is the grid the figures are drawn from, so it must exercise every
-    # documented entry; the coarser main grid need only be a subset.
-    if grid.startswith("sweep_dense"):
-        assert found == set(LOG_AXIS_DROPS_ZEROS), "stale LOG_AXIS_DROPS_ZEROS entry"
+    assert ("calls_total", "nmf_s0") in zeros, "NMF issues no constrained solves"
+    for column, _method in zeros:
+        assert scales[column] == "linear", (
+            f"{column} has exact zeros but is on a {scales[column]} axis, "
+            "which cannot render them"
+        )
 
 
 def test_axial_profile_matches_the_publication_reduction():
@@ -1553,17 +1556,21 @@ def test_relative_error_survives_the_numerically_zero_inactive_zone():
     assert pointwise.max() / rel.max() > 1e3, "pointwise is the ill-conditioned one"
 
 
-def test_relative_error_panel_is_not_log_compressed():
-    """The log10(1+|v|) transform is for raw pressures, not for a ratio in [0, 1].
+def test_field_rendering_applies_no_colour_transformation():
+    """Fields are drawn in their own units, so the colour bar means what it says.
 
-    Applying it to a relative error would squash the whole panel into the bottom of the
-    colour range and make the map unreadable.
+    ``geometry.scale`` used to apply log10(1+|v|) to the physics field, on the grounds
+    that raw contact pressures span decades. Two problems. A colour bar reading
+    log10(1+|lambda|) cannot be read against a force, and the compression makes the field
+    look far more uniform than it is. And it did not match the reference it was meant to
+    reproduce: greedy.viz.publication normalizes with a plain Normalize and rescales by a
+    decimal exponent -- a change of UNITS, not of shape.
     """
     from bench import geometry as g
 
-    ds = ds_mod.load("physics")
-    geom = ds.geometry
-    assert geom.log, "raw pressures do use the log transform"
-    rel = np.linspace(0.0, 0.5, geom.shape[0] * geom.shape[1])
-    assert np.allclose(g.scale(rel, geom, log=False), rel), "override must bypass log"
-    assert not np.allclose(g.scale(rel, geom), rel), "geometry default is still log"
+    geom = ds_mod.load("physics").geometry
+    assert not hasattr(geom, "log"), "the flag should be gone, not merely set False"
+    assert "log" not in geom.clabel.lower()
+    for values in (np.array([0.0, 1e-9, 1.0, 5.0, 1234.0]),
+                   np.linspace(0.0, 0.5, geom.shape[0] * geom.shape[1])):
+        assert np.array_equal(g.scale(values, geom), values)

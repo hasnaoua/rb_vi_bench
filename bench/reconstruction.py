@@ -144,13 +144,13 @@ def _draw_field_triptych(fig, axes, truth, approx, geom, title, color="#e8760a",
     """
     vmin, vmax = geometry.field_limits([truth, approx], geom)
     rel = geometry.relative_error_field(truth, approx)
-    rlo, rhi = geometry.field_limits([rel], geom, log=False)
-    for ax, values, lab, lo, hi, lg in (
-        (axes[0], truth, "HF snapshot", vmin, vmax, None),
-        (axes[1], approx, "reconstruction", vmin, vmax, None),
-        (axes[2], rel, "relative error (/ HF peak)", rlo, rhi, False),
+    rlo, rhi = geometry.field_limits([rel], geom)
+    for ax, values, lab, lo, hi in (
+        (axes[0], truth, "HF snapshot", vmin, vmax),
+        (axes[1], approx, "reconstruction", vmin, vmax),
+        (axes[2], rel, "relative error (/ HF peak)", rlo, rhi),
     ):
-        im = geometry.draw_field(ax, values, geom, vmin=lo, vmax=hi, log=lg)
+        im = geometry.draw_field(ax, values, geom, vmin=lo, vmax=hi)
         ax.set_title(lab, fontsize=9)
         cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
         cb.ax.tick_params(labelsize=6)
@@ -229,8 +229,7 @@ def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> 
     if not errs:
         return None
 
-    lo, hi = geometry.field_limits([e for v in errs.values() for e in v[2:]], geom,
-                                   log=False)
+    lo, hi = geometry.field_limits([e for v in errs.values() for e in v[2:]], geom)
     n = len(errs) + 1
     fig, axes = plt.subplots(n, 2, figsize=(9.6, 2.6 * n), squeeze=False)
 
@@ -244,8 +243,7 @@ def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> 
 
     for row, (key, (b, w, eb, ew)) in enumerate(errs.items(), start=1):
         for ax, idx, e, lbl in ((axes[row][0], b, eb, "best"), (axes[row][1], w, ew, "worst")):
-            im = geometry.draw_field(ax, e, geom, vmin=lo, vmax=hi, cmap="magma",
-                                     log=False)
+            im = geometry.draw_field(ax, e, geom, vmin=lo, vmax=hi, cmap="magma")
             ax.set_title(f"{METHODS[key].label} — rel. error, {lbl} #{idx}", fontsize=8)
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03).ax.tick_params(labelsize=6)
 

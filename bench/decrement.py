@@ -15,9 +15,11 @@ twice as good per step. Dividing by ``e(n)`` asks the scale-free question instea
 share of what is left does this generator remove?* That is comparable across methods,
 across cardinalities, and across datasets whose errors differ by decades.
 
-A **symlog** y-axis is used because the fractions span several orders of magnitude *and*
-must accommodate exact 0 and the occasional negative excursion (a method going backwards);
-a plain log axis would silently drop exactly the points worth seeing.
+The y-axis is **linear**, like every other axis in the benchmark: the plotted value is
+the fraction itself, untransformed. Fractions span several orders of magnitude here, so
+the small ones sit near the baseline -- read those off the CSVs. Nothing is dropped,
+which matters because both 0 (the generator bought nothing) and negative values (the
+method went backwards, as NMF does when refitted from scratch at each R) are results.
 
 Two x-axes, from two different modes:
 
@@ -87,30 +89,6 @@ def decrements_vs_tolerance(points: list[tuple[float, float]]) -> tuple[list, li
     return xs, ys
 
 
-def _symlog_threshold(values) -> float:
-    """Linear-region width for the symlog axis.
-
-    Set **relative to the largest decrement present**, not to the smallest. Anchoring it
-    to the smallest non-zero magnitude puts the linear band at the float-noise floor
-    (~1e-16), which leaves the entire axis logarithmic over thirteen decades and turns
-    every round-off wobble on a plateaued curve into a full-height excursion -- the
-    figure becomes an unreadable comb.
-
-    Two decades below the largest fraction. That band is deliberately wide, because
-    much of the combing here is **real data** rather than noise and still should not
-    dominate the axis: ADG admits every snapshot tied at ``theta_max`` as one batch, so
-    truncating at an intermediate R can add a generator that changes nothing (an exact
-    zero) followed by one that drops the error sharply, and NMF is refitted from scratch
-    at every R. Collapsing everything under 1% of the largest step into a flat band keeps
-    those alternations visible as texture near zero while letting the decade-scale
-    structure be read.
-    """
-    mags = [abs(v) for v in values if v != 0 and not math.isnan(v)]
-    if not mags:
-        return 1e-12
-    return max(mags) * 1e-2
-
-
 def _draw(ax, series, xlabel, title, xscale, mode="cardinality"):
     everything = []
     series = {m: v for m, v in series.items() if m not in FIGURE_EXCLUDED}
@@ -124,7 +102,6 @@ def _draw(ax, series, xlabel, title, xscale, mode="cardinality"):
     if not everything:
         return 0
     ax.axhline(0.0, color="#444444", lw=0.8, ls="-", alpha=0.6)
-    ax.set_yscale("symlog", linthresh=_symlog_threshold(everything))
     ax.set_xscale(xscale)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(r"$\left(e(n)-e(n{+}1)\right)/e(n)$   (train)")
@@ -182,7 +159,7 @@ def figure_vs_tolerance(dataset, rows_by_method, out: Path) -> Path | None:
 
     fig, ax = plt.subplots(figsize=(8.2, 5.0))
     if not _draw(ax, series, r"tolerance $\varepsilon$  (tightening $\rightarrow$)",
-                 f"{dataset} — decrement per tolerance step", "log", mode="tolerance"):
+                 f"{dataset} — decrement per tolerance step", "linear", mode="tolerance"):
         plt.close(fig)
         return None
     ax.invert_xaxis()

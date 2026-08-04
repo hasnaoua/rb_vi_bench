@@ -20,7 +20,7 @@ Three layouts are represented, one per kind of contact discretization in the mer
 ``line``    genuinely 1-D contact, drawn against its **physical abscissa** rather than an
             index. ``hertz_2d`` along the contact arc; the 1-D obstacle toys.
 
-Contact pressures span decades, so ``log=True`` selects the ``log10(1 + |v|)`` scaling the
+Values are rendered on their own scale, with no compression applied -- see ``scale``.
 publication pipeline uses -- on a linear scale the peak saturates and everything else
 reads as zero.
 """
@@ -41,7 +41,6 @@ class FieldGeometry:
     xlabel: str = "component index"
     ylabel: str = ""
     clabel: str = "multiplier"
-    log: bool = False
 
     @property
     def is_field(self) -> bool:
@@ -49,17 +48,21 @@ class FieldGeometry:
         return self.kind in ("grid", "scatter")
 
 
-def scale(values: np.ndarray, geom: FieldGeometry, log: bool | None = None) -> np.ndarray:
-    """Apply the geometry's colour scaling.
+def scale(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
+    """Return the values unchanged -- fields are drawn on the data's own scale.
 
-    ``log`` overrides the geometry's own flag. Needed for the relative-error panel: the
-    ``log10(1+|v|)`` compression exists because raw contact pressures span decades, but a
-    relative error already lives in [0, 1] and that transform would squash it into the
-    bottom of the colour range.
+    This was a ``log10(1 + |v|)`` compression, on the grounds that contact pressures span
+    decades. Two reasons it is gone. It misrepresents the quantity: a colour bar reading
+    ``log10(1+|lambda|)`` cannot be compared against a force in newtons, and the eye reads
+    the compressed field as far more uniform than the data is. And it did not even match
+    the reference it was meant to reproduce -- ``greedy.viz.publication`` normalizes with a
+    plain ``matplotlib.colors.Normalize`` and rescales by a decimal exponent, which is a
+    change of UNITS, not of shape.
+
+    Kept as a function rather than inlined so the single place where a transformation
+    would go is still named, and adding one cannot be done by accident in one call site.
     """
-    v = np.asarray(values, float)
-    use_log = geom.log if log is None else log
-    return np.log10(1.0 + np.abs(v)) if use_log else v
+    return np.asarray(values, dtype=float)
 
 
 def as_surface(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
@@ -80,15 +83,15 @@ def as_surface(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
 
 
 def draw_field(ax, values: np.ndarray, geom: FieldGeometry, *,
-               vmin=None, vmax=None, cmap="viridis", log: bool | None = None):
+               vmin=None, vmax=None, cmap="viridis"):
     """Render one snapshot (or error field) and return the mappable."""
     if geom.kind == "grid":
-        surf = scale(as_surface(values, geom), geom, log)
+        surf = scale(as_surface(values, geom), geom)
         im = ax.imshow(surf, origin="lower", aspect="auto", extent=geom.extent,
                        vmin=vmin, vmax=vmax, cmap=cmap, interpolation="nearest")
     elif geom.kind == "scatter":
         xy = np.asarray(geom.coords, float)
-        im = ax.tripcolor(xy[:, 0], xy[:, 1], scale(values, geom, log),
+        im = ax.tripcolor(xy[:, 0], xy[:, 1], scale(values, geom),
                           shading="gouraud", vmin=vmin, vmax=vmax, cmap=cmap)
         ax.set_aspect("equal")
     else:
@@ -118,13 +121,13 @@ def relative_error_field(truth: np.ndarray, approx: np.ndarray) -> np.ndarray:
     return np.abs(t - np.asarray(approx, float)) / (peak if peak > 0 else 1.0)
 
 
-def field_limits(panels, geom: FieldGeometry, percentiles=(0.5, 99.7), log=None):
+def field_limits(panels, geom: FieldGeometry, percentiles=(0.5, 99.7)):
     """Robust shared colour limits, as the publication pipeline uses.
 
     Percentile-clipped rather than min/max: a single saturated node would otherwise set
     the scale and flatten the whole field.
     """
-    stacked = np.concatenate([np.asarray(scale(p, geom, log), float).ravel()
+    stacked = np.concatenate([np.asarray(scale(p, geom), float).ravel()
                               for p in panels])
     stacked = stacked[np.isfinite(stacked)]
     if stacked.size == 0:
@@ -197,8 +200,7 @@ def physics_geometry() -> FieldGeometry:
         extent=(0.0, float(HEIGHT_MM), 0.0, float(np.degrees(SECTOR_ANGLE_RAD))),
         xlabel="axial $z$ [mm]",
         ylabel=r"$\theta$ [deg]",
-        clabel=r"$\log_{10}(1+|\lambda|)$",
-        log=True,
+        clabel="Normal force",
     )
 
 
