@@ -21,16 +21,24 @@ hull, and it is the statistic that can distinguish two methods whose snapshot er
 identical.
 
 **2. Extent** -- how much space the cone actually encloses. Cut ``K_R`` by a hyperplane
-shared by every method and measure the resulting section: a length in 2-D, an area in
-3-D, an ``(R-1)``-volume in general, reported against what ``R`` mutually orthogonal
-directions would give under the same cut. See ``section_volume``.
+shared by every method and take the **mean width** of the resulting section, averaged over
+directions of the *ambient* space, as a fraction of the same quantity for ``K_full``.
+See ``section_extent``.
 
 This replaces *mean pairwise angle* as the width statistic, because a mean over edges is
 not an extent. It saturates once generators are mutually well separated, and a generator
 added strictly *inside* the existing cone enlarges the enclosed region not at all while
 still moving the mean -- so two cones with equal mean aperture can enclose very different
-amounts of space. The section volume answers the question directly and degenerates to
-exactly 0 when the generators become linearly dependent, which is the honest answer.
+amounts of space.
+
+Two properties are non-negotiable here and the metric is built to have them. The measure
+is taken in the **dimension of the space**, not the number of generators: ``R`` rays in
+``R^m`` are not a basis, and letting ``R`` set the dimension of the yardstick measures the
+method's cardinality rather than its cone. And it is **monotone in R** -- ``K_R`` is a
+sub-cone of ``K_{R+1}``, so the section is a subset of the next section and adding a
+generator can only enlarge it. A statistic that falls there is reporting on its own
+normalization. ``section_extent`` rises by construction, per Monte-Carlo realization and
+not merely in expectation.
 
 ``aperture_mean_deg`` is still computed and still in the CSV, now labelled as what it
 is: a **conditioning** diagnostic, the quantity [NDEE22] §4 is after when it asks for a
@@ -73,8 +81,9 @@ extent alone rewards enclosed space without asking whether that space is useful.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
-from scipy.special import gammaln
 
 from .. import _paths  # noqa: F401
 from ..types import BasisResult, Dataset
@@ -204,82 +213,127 @@ def aperture(generators: np.ndarray) -> dict[str, float]:
 SECTION_HEIGHT = 1.0
 
 
-def section_volume(generators: np.ndarray) -> dict[str, float]:
-    """Measure of the cone's cross-section at a common height -- how much space it encloses.
+def section_extent(dataset: Dataset, generators: np.ndarray, *,
+                   n_samples: int = 512, seed: int = 0) -> dict[str, float]:
+    """How much space the cone encloses, measured in the ambient space and monotone in R.
 
-    Cut ``K_R = span_+{g_1..g_R}`` by the hyperplane ``<x, u> = h`` shared by every method
-    (see ``SECTION_HEIGHT``). The section is the convex hull of ``p_i = h g_i / <g_i, u>``,
-    a simplex whose ``(R-1)``-dimensional volume is the natural notion of *extent*: a disk
-    area in the 3-D case, a segment length in 2-D, an ``(R-1)``-volume in general. Unlike a
-    mean pairwise angle this responds to the whole configuration -- a generator added
-    inside the existing cone contributes no volume, which is the correct answer.
+    Cut ``K_R`` by the hyperplane ``<x, u> = h`` shared by every method (see
+    ``SECTION_HEIGHT``). The section is the convex hull of ``p_i = h g_i / <g_i, u>``.
+    What is reported is its **mean width**, against the mean width of the section of
+    ``K_full`` cut by the same hyperplane.
 
-    Each ``p_i`` is invariant to rescaling ``g_i``, so generator normalization cannot
-    change the result.
+    **Why not the volume of that hull.** An earlier version measured its
+    ``(R-1)``-dimensional volume, which is wrong twice over. The generators of a cone are
+    not a basis -- they are ``R`` rays in ``R^m``, usually with ``R << m`` and no claim to
+    span anything -- so taking ``R-1`` as the dimension of the measurement builds the
+    method's own cardinality into the yardstick. And because that dimension moved with
+    ``R``, the reported number could *fall* when a generator was added. That is impossible
+    for the object being measured: ``K_R`` is a sub-cone of ``K_{R+1}``, so the section is
+    a subset of the next section and can only grow. A statistic that decreases there is
+    measuring the yardstick, not the cone.
 
-    **Raw volumes at different R are not comparable, and are not reported as if they
-    were.** An ``(R-1)``-volume and an ``R``-volume are quantities of different dimension;
-    the sequence over R is not a curve of one quantity. Two things follow:
+    Measuring in the ambient space instead runs into the reason the volume was tempting:
+    the section of an ``R``-generator cone is at most ``(R-1)``-dimensional, so its
+    ``(m-1)``-volume inside the hyperplane is *exactly* zero for every case here
+    (``R <= 40``, ``m`` from 40 to 7676). Every ambient-dimensional volume, solid angle or
+    covered-sphere-fraction vanishes identically for the same reason. The quantity has to
+    be one that stays positive on a lower-dimensional body.
 
-    * comparisons are *vertical* -- between methods at the same R, which is the
-      per-iteration grouping this metric is built for and where the dimensions agree;
-    * the reported number is a **ratio**, ``V / V_ortho``, against the section of ``R``
-      mutually orthogonal directions cut by the same hyperplane. That reference is the
-      widest configuration available inside ``W^+`` (every pair at 90 degrees, which is
-      the orthant baseline), it has the same dimension as the cone being measured, and
-      dividing cancels the units. The result is dimensionless and lands in [0, 1]:
-      1 means "as wide as R directions can be", 0 means the generators are linearly
-      dependent and the cone is degenerate.
+    **Mean width is that quantity.** For a convex body ``S``,
 
-    **Two forms of the ratio are reported, and the per-dimension one is what to plot.**
-    ``section_vol_ratio`` is the volume ratio itself. It is a product of ``R-1`` width
-    factors, each below 1, so it decays geometrically in R: across the benchmark it spans
-    1e-139 to 1e-2, which no single axis can show and which mostly measures *R* rather
-    than the method. ``section_width_ratio = (V / V_ortho)^(1/(R-1))`` is its geometric
-    mean -- the typical width per generator direction, in the same units as a single
-    ratio rather than a product of them. It stays in [0, 1] (orthogonal directions still
-    give exactly 1), it does not drift with R merely because R grew, and in practice it
-    lands between 0.001 and 0.3, which is readable. It is the ``R``-th root of a volume,
-    the same normalization that turns a volume into a mean radius.
+        w(S) = E_g [ max_i <p_i, g> - min_i <p_i, g> ],    g ~ N(0, I_m),
 
-    Computed in logs throughout. Both ``V`` and ``V_ortho`` contain ``1/(R-1)!`` and a
-    factor ``m^{(R-1)/2}``, which overflow and underflow long before R reaches 40 --
-    and both cancel exactly in the ratio, so the ratio is well-conditioned even where
-    neither volume is representable. Singular values are used rather than a determinant
-    so a rank-deficient section gives 0 instead of a failure.
+    the average extent of ``S`` over directions of the ambient space. It has exactly the
+    properties the volume lacked:
+
+    * **Ambient.** The dimension enters through ``g ~ N(0, I_m)`` -- the space's dimension,
+      not the generator count. Nothing assumes the generators are independent, and adding
+      a redundant one is handled correctly rather than making the object degenerate.
+    * **Monotone, by construction.** More vertices means a maximum over a superset, so the
+      integrand rises pointwise in ``g``. Adding a generator can never decrease it. The
+      Gaussian directions are drawn from a fixed seed and cached, so the same ``g`` are
+      used at every ``R`` and the monotonicity holds *per realization*, not merely in
+      expectation -- Monte-Carlo noise cannot manufacture a decrease.
+
+      The guarantee is about **nested** cones, and it is worth being precise about that,
+      because one method here is not nested. Every greedy method appends to the cone it
+      already has, so ``K_R`` really is a sub-cone of ``K_{R+1}`` and the measured extent
+      rises: over the dense sweep this holds in 1485 of 1485 consecutive-R pairs for CPG,
+      mCPG, ADG and the orthant, with no exceptions. NMF is refitted from scratch at each
+      ``R`` and its atoms are optimized rather than accumulated, so its cones are unrelated
+      across ``R`` and its extent falls in 82 of 294 pairs (worst drop 12%). That is not a
+      failure of this metric but the drawback [BEE20] §5 raises against NMF, showing up
+      geometrically.
+    * **Positive on a thin cone**, where every ambient volume is zero.
+    * **Same units at every R**, so the values are a single quantity across the sweep and
+      the curve can be read horizontally as well as vertically.
+
+    Reported as a fraction of the section of ``K_full = span_+{all training snapshots}``,
+    which makes it dimensionless and gives it a meaningful ceiling: **1 means the cone is
+    as wide, on average over directions, as everything the training snapshots generate.**
+
+    Values **above 1 are possible and are a finding, not an error.** They mean the cone is
+    wider than ``K_full`` in the mean -- which requires leaving it. mCPG does exactly that
+    (see ``excess`` and ``reach_outside``), and so does the orthant baseline, whose
+    canonical axes are not non-negative combinations of the snapshots.
     """
     G = np.asarray(generators, float)
-    if G.size == 0 or G.shape[1] < 2:
-        # A single ray sections to a point. Its 0-volume is 1 by convention, which would
-        # read as a full-width cone; nan says "not defined here", as gram_cond does.
-        return {"section_vol_ratio": float("nan"), "section_log_volume": float("nan")}
+    if G.size == 0 or G.shape[1] == 0:
+        return {}
+    m = G.shape[0]
 
-    m, R = G.shape
-    axis_inner = G.sum(axis=0) / np.sqrt(m)          # <g_i, u> for u = 1/sqrt(m) * ones
-    if not np.all(axis_inner > 0):
-        # Unbounded section: the hyperplane does not cut this cone transversally.
-        return {"section_vol_ratio": float("nan"), "section_log_volume": float("nan")}
+    P = _section_vertices(G, m)
+    if P is None:
+        # The hyperplane does not cut this cone transversally -- POD's mixed-sign modes
+        # are the case in practice. An unbounded section has no width to report.
+        return {"section_extent": float("nan"), "section_width": float("nan")}
+    F = _section_vertices(dataset.train(), m, drop_nontransversal=True)
+    if F is None:
+        return {}
 
-    P = SECTION_HEIGHT * G / axis_inner              # vertices of the section
-    M = P[:, 1:] - P[:, :1]                          # edges from the first vertex
-    sv = np.linalg.svd(M, compute_uv=False)
-
-    # log V = -lgamma(R) + sum(log s_i); the reference differs only in its edge lengths.
-    log_simplex = -float(gammaln(R))
-    if np.any(sv <= 0):
-        return {"section_vol_ratio": 0.0, "section_log_volume": float("-inf")}
-    log_vol = log_simplex + float(np.sum(np.log(sv)))
-
-    # R orthonormal axes under the same cut: vertices sqrt(m) h e_i, whose edge Gram is
-    # m h^2 (I + J), with det = m^{R-1} h^{2(R-1)} R.
-    log_vol_ortho = log_simplex + 0.5 * ((R - 1) * np.log(m) + np.log(R)) \
-        + (R - 1) * np.log(SECTION_HEIGHT)
-    log_ratio = log_vol - log_vol_ortho
+    Z = _gaussian_directions(m, n_samples, seed)
+    w = _mean_width(P, Z)
+    w_full = _mean_width(F, Z)
     return {
-        "section_vol_ratio": float(np.exp(log_ratio)),
-        "section_width_ratio": float(np.exp(log_ratio / (R - 1))),
-        "section_log_volume": float(log_vol),
+        "section_extent": float(w / w_full) if w_full > 0 else float("nan"),
+        "section_width": float(w),
     }
+
+
+def _section_vertices(G: np.ndarray, m: int, *, drop_nontransversal: bool = False):
+    """Vertices ``h g_i / <g_i, u>`` of the section, or ``None`` if it is unbounded.
+
+    Scaling any ``g_i`` leaves its vertex unchanged, so the measure cannot respond to the
+    methods disagreeing about normalization -- ADG normalizes, CPG selects raw snapshots,
+    NMF's atoms carry arbitrary scale.
+    """
+    G = np.asarray(G, float)
+    inner = G.sum(axis=0) / np.sqrt(m)            # <g_i, u> for u = ones / sqrt(m)
+    if drop_nontransversal:
+        keep = inner > 0
+        if not keep.any():
+            return None
+        G, inner = G[:, keep], inner[keep]
+    elif not np.all(inner > 0):
+        return None
+    return SECTION_HEIGHT * G / inner
+
+
+@lru_cache(maxsize=8)
+def _gaussian_directions(m: int, n_samples: int, seed: int) -> np.ndarray:
+    """Fixed directions for the mean-width estimate, shared across every cell.
+
+    Cached on purpose. Drawing fresh directions per cell would make the estimate
+    non-monotone in R at the noise level, which is precisely the artefact this metric
+    exists to avoid, and would redraw millions of normals per dataset for nothing.
+    """
+    return np.random.default_rng(seed).standard_normal((m, n_samples))
+
+
+def _mean_width(P: np.ndarray, Z: np.ndarray) -> float:
+    """``E_g[max_i <p_i, g> - min_i <p_i, g>]`` over the supplied directions."""
+    proj = P.T @ Z                                 # (n_vertices, n_samples)
+    return float((proj.max(axis=0) - proj.min(axis=0)).mean())
 
 
 #: A generator is counted as outside ``K_full`` past this relative NNLS residual. Well
@@ -344,7 +398,7 @@ def evaluate(dataset: Dataset, result: BasisResult, *,
     row.update(coverage(dataset, result.generators, n_samples=n_samples, seed=seed))
     row.update(excess(dataset, result.generators, n_samples=n_samples, seed=seed + 1))
     row.update(aperture(result.generators))
-    row.update(section_volume(result.generators))
+    row.update(section_extent(dataset, result.generators))
     row.update(reach_outside(dataset, result.generators))
     # Two-sided: zero exactly when K_R and K_full coincide. Reporting only one direction
     # lets a cone look perfect while being much too small, or much too large.

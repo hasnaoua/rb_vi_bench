@@ -89,13 +89,15 @@ STYLE: dict[str, dict] = {
 #: 0, and only mCPG's genuine excursion (up to 0.26) lifts off it.
 #:
 #: The last two panels answer different questions and must not be conflated. EXTENT
-#: (``section_width_ratio``) is how much space the cone encloses: cut it by a hyperplane
-#: common to every method and measure the section, against what R orthogonal directions
-#: would give. CONDITIONING (``aperture_mean_deg``) is a mean over edges; it says nothing
-#: about enclosed space, and a generator added strictly inside the cone leaves the region
-#: unchanged while moving the mean. Extent is read VERTICALLY, between methods at one R:
-#: the section has dimension R-1, so its raw volume is not one quantity across R, and
-#: only the ratio to a same-dimension reference makes the numbers comparable at all.
+#: (``section_extent``) is how much space the cone encloses: cut it by a hyperplane common
+#: to every method and take the mean width of the section over directions of the AMBIENT
+#: space, as a fraction of the same width for ``K_full``. It rises monotonically in R --
+#: ``K_R`` is a sub-cone of ``K_{R+1}``, so the section can only grow -- and 1 means "as
+#: wide, on average over directions, as everything the snapshots generate". Above 1 means
+#: the cone is wider than ``K_full``, which requires leaving it; mCPG and the orthant both
+#: do. CONDITIONING (``aperture_mean_deg``) is a mean over edges. It says nothing about
+#: enclosed space: a generator added strictly inside the cone leaves the region unchanged
+#: while still moving the mean.
 CONE_PANELS = (
     ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "linear",
      "how much of the full cone is MISSED (too small)"),
@@ -106,8 +108,8 @@ CONE_PANELS = (
     # The extent panel. Read it VERTICALLY -- between methods at one R -- because the
     # underlying volume changes dimension with R; the ratio makes the numbers
     # comparable, not the geometry.
-    ("section_width_ratio", r"$(V / V_{\perp})^{1/(R-1)}$",     "linear",
-     "EXTENT: section at common height, per generator direction"),
+    ("section_extent",    r"$w(S_R)\,/\,w(S_{full})$",          "linear",
+     "EXTENT: mean width of the section, vs that of $K_{full}$"),
     ("aperture_mean_deg", "mean pairwise angle [deg]",         "linear",
      "conditioning (mean pairwise angle, NOT an extent)"),
 )
@@ -393,7 +395,7 @@ def figures_reference_split(dataset: str, series, out_dir: Path) -> list[Path]:
              "e_orth_mean": "orthogonality", "calls_total": "offline_cost",
              "cover_mean_err": "cone_missed", "excess_mean_err": "cone_excess",
              "cone_hausdorff": "cone_two_sided", "aperture_mean_deg": "aperture",
-             "section_width_ratio": "cone_extent"}
+             "section_extent": "cone_extent"}
     written: list[Path] = []
     for column, ylabel, yscale, title in PANELS + CONE_PANELS:
         name = names[column]
