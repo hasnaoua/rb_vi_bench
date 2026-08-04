@@ -1546,6 +1546,68 @@ def test_section_extent_declines_to_measure_an_unbounded_section():
     assert math.isnan(section_extent(ds, mixed)["section_extent"])
 
 
+def test_two_sided_discrepancy_averages_both_directions():
+    """It must combine the two directions, not report whichever happens to be larger.
+
+    The panel exists to compare methods, and max() cannot: over the dense sweep it returns
+    the MISSED mass in 88% of CPG and ADG cells and the EXCESS mass in 76-95% of mCPG, NMF
+    and orthant cells, so the curve silently changes which quantity it plots from one
+    method to the next. It also throws the smaller term away, scoring a cone that is both
+    somewhat too small and hugely too large identically to one that is only too large.
+
+    The average is built from the MEAN residuals, so this panel is exactly the average of
+    the two panels beside it. The old max used the max-over-samples residuals while those
+    panels plot the mean-over-samples ones, so it could not be read against them.
+    """
+    from bench import metrics
+    from bench.figures import CONE_PANELS
+
+    columns = [c for c, _y, _s, _t in CONE_PANELS]
+    assert "cone_sym_err" in columns and "cone_hausdorff" not in columns
+
+    ds = ds_mod.load("fem_lambda")
+    for method in ("cpg_bee20", "mcpg_ndee22", "adg"):
+        res = METHODS[method].fit(ds, R=6)
+        row = metrics.cone_geometry.evaluate(ds, res)
+        assert row["cone_sym_err"] == pytest.approx(
+            0.5 * (row["cover_mean_err"] + row["excess_mean_err"]))
+        # The strict Hausdorff stays available, and stays a DIFFERENT number.
+        assert row["cone_hausdorff"] == pytest.approx(
+            max(row["cover_max_err"], row["excess_max_err"]))
+
+
+def test_two_sided_discrepancy_vanishes_only_when_both_directions_do():
+    """Zero must mean the cones coincide, not that one direction happens to vanish.
+
+    This is the property the max was chosen for originally, and averaging keeps it: both
+    terms are non-negative, so their mean is zero exactly when each is. A cone spanned by
+    every training snapshot misses nothing and exceeds nothing; a strict sub-cone misses
+    something even though its excess is still zero, and must not read as coincident.
+    """
+    from bench import metrics
+
+    ds = ds_mod.load("fem_lambda")
+    full = metrics.cone_geometry.evaluate(
+        ds, _basis_of(ds, ds.train()))
+    assert full["cone_sym_err"] == pytest.approx(0.0, abs=1e-9)
+
+    sub = metrics.cone_geometry.evaluate(ds, _basis_of(ds, ds.train()[:, :4]))
+    assert sub["excess_mean_err"] == pytest.approx(0.0, abs=1e-9), "a sub-cone cannot exceed"
+    assert sub["cover_mean_err"] > 1e-3, "but it does miss"
+    assert sub["cone_sym_err"] > 0.0, "so it must not read as coincident"
+
+
+def _basis_of(dataset, generators):
+    """A BasisResult wrapping explicit generators, for metric-level tests."""
+    from bench.types import BasisResult
+
+    return BasisResult(
+        method="explicit", family="test", paper_tag="", generators=np.asarray(generators),
+        R=int(np.asarray(generators).shape[1]), selected_indices=[], errors=[],
+        fit_seconds=0.0, solver_calls={}, normalized_generators=False, notes="",
+    )
+
+
 def test_every_axis_is_linear():
     """No panel transforms its values, so a figure can be read against the CSV directly.
 

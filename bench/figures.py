@@ -103,8 +103,8 @@ CONE_PANELS = (
      "how much of the full cone is MISSED (too small)"),
     ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "linear",
      "how much of the cone lies OUTSIDE (too large)"),
-    ("cone_hausdorff",    "two-sided distance",                "linear",
-     r"$\max$(missed, excess) — 0 iff the cones coincide"),
+    ("cone_sym_err",      "two-sided discrepancy",             "linear",
+     r"$\frac{1}{2}$(missed + excess) — 0 iff the cones coincide"),
     # The extent panel. Read it VERTICALLY -- between methods at one R -- because the
     # underlying volume changes dimension with R; the ratio makes the numbers
     # comparable, not the geometry.
@@ -394,7 +394,7 @@ def figures_reference_split(dataset: str, series, out_dir: Path) -> list[Path]:
     names = {"test_max_rel_err": "precision", "gram_cond": "conditioning",
              "e_orth_mean": "orthogonality", "calls_total": "offline_cost",
              "cover_mean_err": "cone_missed", "excess_mean_err": "cone_excess",
-             "cone_hausdorff": "cone_two_sided", "aperture_mean_deg": "aperture",
+             "cone_sym_err": "cone_two_sided", "aperture_mean_deg": "aperture",
              "section_extent": "cone_extent"}
     written: list[Path] = []
     for column, ylabel, yscale, title in PANELS + CONE_PANELS:

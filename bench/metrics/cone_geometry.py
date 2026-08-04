@@ -400,8 +400,30 @@ def evaluate(dataset: Dataset, result: BasisResult, *,
     row.update(aperture(result.generators))
     row.update(section_extent(dataset, result.generators))
     row.update(reach_outside(dataset, result.generators))
-    # Two-sided: zero exactly when K_R and K_full coincide. Reporting only one direction
-    # lets a cone look perfect while being much too small, or much too large.
+    # Two-sided discrepancy: zero exactly when K_R and K_full coincide. Reporting only one
+    # direction lets a cone look perfect while being much too small, or much too large.
+    #
+    # AVERAGED, not maximized, and that is the number to read. A max reports only whichever
+    # direction happens to be larger, so it silently changes which quantity it is showing
+    # from one method to the next: over the dense sweep it returns `cover` in 88% of CPG
+    # and ADG cells and `excess` in 76-95% of mCPG, NMF and orthant cells. A panel that is
+    # the missed-mass for some curves and the excess-mass for others cannot be compared
+    # across methods, which is the only thing that panel is for. The max also discards the
+    # smaller term entirely, so a cone that is both somewhat too small AND hugely too large
+    # scores identically to one that is only hugely too large.
+    #
+    # The average keeps both faults in view and is still a metric on cones: it is
+    # symmetric, it vanishes only when both directions do, and it inherits the triangle
+    # inequality from the directed distances it averages.
+    #
+    # It is built from the MEAN residuals, so this panel is exactly the average of the two
+    # panels beside it. The old max mixed statistics as well as directions -- it combined
+    # the max-over-samples residuals while those panels plot the mean-over-samples ones,
+    # so it could not be read against them at all.
+    if "cover_mean_err" in row and "excess_mean_err" in row:
+        row["cone_sym_err"] = 0.5 * (row["cover_mean_err"] + row["excess_mean_err"])
+    # The textbook Hausdorff distance, kept in the CSV. sup-based and therefore the strict
+    # "0 iff the cones coincide" statement, but for the reasons above it is not plotted.
     if "cover_max_err" in row and "excess_max_err" in row:
         row["cone_hausdorff"] = max(row["cover_max_err"], row["excess_max_err"])
     return row
