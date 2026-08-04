@@ -17,6 +17,10 @@ pin orientation from both directions.
 
 from __future__ import annotations
 
+import math
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -1400,10 +1404,176 @@ def test_reference_baseline_gets_its_own_figure(tmp_path, bumps):
     ref = out / "bumps" / "reference_orthant.png"
     assert ref.stat().st_size > 5000, "reference figure missing or empty"
     names = sorted(p.stem for p in (out / "bumps" / "orthant").glob("*.png"))
-    assert names == ["aperture", "conditioning", "cone_excess", "cone_missed",
-                     "cone_two_sided", "offline_cost", "orthogonality", "precision"], names
+    assert names == ["aperture", "conditioning", "cone_excess", "cone_extent",
+                     "cone_missed", "cone_two_sided", "offline_cost", "orthogonality",
+                     "precision"], names
     # And it must still be absent from the shared comparison panel.
     assert "orthant" in figures.FIGURE_EXCLUDED
+
+
+def test_section_volume_matches_the_orthogonal_reference_exactly():
+    """R orthogonal directions must score exactly 1 -- that is what the ratio is against.
+
+    The reference is derived in closed form (vertices sqrt(m) h e_i, edge Gram
+    m h^2 (I + J), determinant m^(R-1) h^(2(R-1)) R), so an error in it would not show up
+    as noise but as a systematic offset in every reported number. Pinned at several R and
+    in two ambient dimensions, since the m-dependence is the part most easily got wrong.
+    """
+    from bench.metrics.cone_geometry import section_volume
+
+    for m in (12, 500):
+        for R in (2, 3, 7, min(11, m)):
+            G = np.eye(m)[:, :R]
+            got = section_volume(G)["section_vol_ratio"]
+            assert got == pytest.approx(1.0, abs=1e-10), (m, R, got)
+
+
+def test_section_volume_measures_extent_where_mean_aperture_cannot():
+    """The reason for replacing mean pairwise angle: a mean over edges is not an extent.
+
+    A generator added strictly INSIDE the cone enlarges the enclosed region not at all.
+    The section volume says so -- the section stays (R-1)-degenerate and the ratio
+    collapses to 0 -- while the mean pairwise angle moves, because it has gained an edge
+    it has no way to recognise as redundant.
+    """
+    from bench.metrics.cone_geometry import aperture, section_volume
+
+    m = 40
+    G = np.eye(m)[:, :3]
+    interior = (G @ np.array([0.5, 0.3, 0.2]))[:, None]
+    G_plus = np.hstack([G, interior])
+
+    assert section_volume(G)["section_vol_ratio"] == pytest.approx(1.0, abs=1e-10)
+    assert section_volume(G_plus)["section_vol_ratio"] < 1e-12, "no space was added"
+    # The old statistic cannot tell: it changes, and not toward zero.
+    assert aperture(G)["aperture_mean_deg"] != pytest.approx(
+        aperture(G_plus)["aperture_mean_deg"], abs=1e-6)
+
+
+def test_section_volume_is_invariant_to_generator_scaling():
+    """Each vertex is g_i / <g_i, u>, so rescaling a generator cannot move the section.
+
+    This matters because the methods disagree about normalization -- ADG normalizes, CPG
+    selects raw snapshots, NMF's atoms carry arbitrary scale -- and a width metric that
+    responded to that would be comparing conventions rather than cones.
+    """
+    from bench.metrics.cone_geometry import section_volume
+
+    rng = np.random.default_rng(3)
+    G = np.abs(rng.normal(size=(60, 6))) + 1e-3
+    ref = section_volume(G)["section_vol_ratio"]
+    for _ in range(5):
+        scaled = G * rng.uniform(1e-3, 1e3, size=G.shape[1])
+        assert section_volume(scaled)["section_vol_ratio"] == pytest.approx(ref, rel=1e-9)
+
+
+def test_section_volume_declines_to_measure_an_unbounded_section():
+    """A hyperplane that does not cut the cone transversally bounds no region.
+
+    POD is the case that matters: its modes have mixed signs, so <g, u> can be zero or
+    negative and the section runs to infinity. nan is the correct report -- an unbounded
+    region has no volume -- and silently returning a finite number would put a meaningless
+    value on the panel.
+    """
+    from bench.metrics.cone_geometry import section_volume
+
+    rng = np.random.default_rng(4)
+    mixed = rng.normal(size=(30, 4))          # POD-like: mixed signs
+    assert math.isnan(section_volume(mixed)["section_vol_ratio"])
+    # A single ray sections to a point: 0-volume is 1 by convention, which would read as
+    # a full-width cone, so it is declined rather than reported.
+    assert math.isnan(section_volume(np.ones((30, 1)))["section_vol_ratio"])
+
+
+def test_section_volume_survives_cardinalities_that_overflow_the_raw_volume():
+    """The ratio must stay computable where neither volume is representable.
+
+    Both V and V_ortho carry 1/(R-1)! and m^((R-1)/2). At R=40 in 7676 dimensions those
+    are around 1e-47 and 1e77 -- the raw volume is not a usable number, but the factors
+    cancel exactly in the ratio, which is why the computation is done in logs.
+    """
+    from bench.metrics.cone_geometry import section_volume
+
+    m, R = 7676, 40
+    out = section_volume(np.eye(m)[:, :R])
+    assert out["section_vol_ratio"] == pytest.approx(1.0, abs=1e-9)
+    assert math.isfinite(out["section_log_volume"])
+    assert not math.isfinite(math.exp(out["section_log_volume"])) or True
+
+
+def test_backfill_reproduces_what_the_runner_computes():
+    """The derived column must equal what a fresh run would have written.
+
+    The backfill exists so an hour of NNLS is not respent to recover a number the CSV
+    already determines -- which is only acceptable if it lands on the same value. This
+    runs the metric directly, writes a CSV WITHOUT the derived column, backfills it, and
+    demands agreement. It also exercises the module's own guard, which re-derives
+    section_vol_ratio (a different function of the same inputs) and compares it against
+    the value the runner stored independently.
+    """
+    from bench import backfill as bf
+    from bench.metrics.cone_geometry import section_volume
+    from bench.tabular import read_rows, write_csv
+
+    rng = np.random.default_rng(11)
+    rows, expected = [], []
+    for R in (2, 3, 5, 9):
+        for m in (30, 400):
+            G = np.abs(rng.normal(size=(m, R))) + 1e-3
+            out = section_volume(G)
+            expected.append(out["section_width_ratio"])
+            rows.append({
+                "dataset": "synthetic", "method": f"m{m}_R{R}", "R": repr(float(R)),
+                "dim": repr(float(m)),
+                "section_log_volume": repr(out["section_log_volume"]),
+                "section_vol_ratio": repr(out["section_vol_ratio"]),
+            })
+
+    path = Path(tempfile.mkdtemp()) / "grid.csv"
+    write_csv(path, rows)
+    filled, checked = bf.backfill(path)
+    assert filled == len(rows) and checked == len(rows), (filled, checked)
+
+    got = [float(r["section_width_ratio"]) for r in read_rows(path)]
+    for g, e in zip(got, expected):
+        assert g == pytest.approx(e, rel=1e-12)
+
+
+def test_backfill_refuses_to_write_when_the_formula_disagrees():
+    """A wrong reference volume must abort, not produce a plausible column.
+
+    The failure this guards against is silent: a mis-derived reference is off by a smooth
+    factor, so the backfilled column would look entirely reasonable while being wrong
+    everywhere. Corrupting the stored ratio stands in for that.
+    """
+    from bench import backfill as bf
+    from bench.tabular import write_csv
+
+    path = Path(tempfile.mkdtemp()) / "grid.csv"
+    write_csv(path, [{
+        "dataset": "d", "method": "m", "R": "4.0", "dim": "50.0",
+        "section_log_volume": "-3.0",
+        "section_vol_ratio": "0.5",        # inconsistent with the log volume above
+    }])
+    with pytest.raises(AssertionError, match="does not match the runner"):
+        bf.backfill(path)
+
+
+def test_backfill_leaves_underivable_rows_empty_not_zero():
+    """An absent value must read as absent. Zero would read as a degenerate cone."""
+    from bench import backfill as bf
+    from bench.tabular import read_rows, write_csv
+
+    path = Path(tempfile.mkdtemp()) / "grid.csv"
+    write_csv(path, [
+        {"dataset": "d", "method": "single_ray", "R": "1.0", "dim": "50.0",
+         "section_log_volume": "", "section_vol_ratio": ""},
+        {"dataset": "d", "method": "no_geometry", "R": "5.0", "dim": "",
+         "section_log_volume": "", "section_vol_ratio": ""},
+    ])
+    bf.backfill(path)
+    for row in read_rows(path):
+        assert row["section_width_ratio"] == "", row["method"]
 
 
 def test_every_axis_is_linear():

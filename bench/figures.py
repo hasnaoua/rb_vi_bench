@@ -8,7 +8,7 @@ threshold ``epsilon * max_q ||theta_q||``. Putting those on a shared x-axis woul
 comparison that does not exist. At matched cardinality every method is handed the same
 ``R`` and no stopping rule applies, so the curves are directly comparable.
 
-Four panels per dataset, one line per method:
+Four comparison panels per dataset, one line per method:
 
 * **precision** -- test (solid) and train (dashed) max relative projection error.
 * **conditioning** -- Gram condition number, log scale. Undefined below R=2.
@@ -83,25 +83,37 @@ STYLE: dict[str, dict] = {
 #: how wide it opens, and how far it reaches outside. See ``metrics.cone_geometry``.
 #: Both directions are shown, because neither implies the other: a cone can cover
 #: ``K_full`` perfectly while extending far beyond it, or sit strictly inside while
-#: missing most of it. All four are linear. One consequence to read correctly: for cones
-#: spanned by snapshots ``excess`` is round-off (2.8e-17 to 5.5e-16) about a structural
-#: zero -- such a cone cannot leave ``K_full`` -- so those curves sit flat on the axis at
-#: what is effectively 0, and only mCPG's genuine excursion (up to 0.26) lifts off it.
+#: missing most of it. One consequence to read correctly: for cones spanned by snapshots
+#: ``excess`` is round-off (2.8e-17 to 5.5e-16) about a structural zero -- such a cone
+#: cannot leave ``K_full`` -- so those curves sit flat on the axis at what is effectively
+#: 0, and only mCPG's genuine excursion (up to 0.26) lifts off it.
+#:
+#: The last two panels answer different questions and must not be conflated. EXTENT
+#: (``section_width_ratio``) is how much space the cone encloses: cut it by a hyperplane
+#: common to every method and measure the section, against what R orthogonal directions
+#: would give. CONDITIONING (``aperture_mean_deg``) is a mean over edges; it says nothing
+#: about enclosed space, and a generator added strictly inside the cone leaves the region
+#: unchanged while moving the mean. Extent is read VERTICALLY, between methods at one R:
+#: the section has dimension R-1, so its raw volume is not one quantity across R, and
+#: only the ratio to a same-dimension reference makes the numbers comparable at all.
 CONE_PANELS = (
-    # log, with a known and accepted cost: the orthant covers K_full exactly in 15 cells
-    # and those points do not render. See LOG_AXIS_DROPS_ZEROS.
     ("cover_mean_err",    r"mean residual, $K_{full}\to K_R$", "linear",
      "how much of the full cone is MISSED (too small)"),
     ("excess_mean_err",   r"mean residual, $K_R\to K_{full}$", "linear",
      "how much of the cone lies OUTSIDE (too large)"),
     ("cone_hausdorff",    "two-sided distance",                "linear",
      r"$\max$(missed, excess) — 0 iff the cones coincide"),
+    # The extent panel. Read it VERTICALLY -- between methods at one R -- because the
+    # underlying volume changes dimension with R; the ratio makes the numbers
+    # comparable, not the geometry.
+    ("section_width_ratio", r"$(V / V_{\perp})^{1/(R-1)}$",     "linear",
+     "EXTENT: section at common height, per generator direction"),
     ("aperture_mean_deg", "mean pairwise angle [deg]",         "linear",
-     "aperture (how wide the cone opens)"),
+     "conditioning (mean pairwise angle, NOT an extent)"),
 )
 
 #: Extra split figures, written only by ``--split``. Kept out of ``PANELS`` so the
-#: four-panel layout stays a 2x2 grid.
+#: comparison layout stays a 2x2 grid.
 EXTRA_SPLIT_PANELS = (
     ("test_max_rel_err_persnap", "max per-snapshot relative error", "linear",
      "precision, each snapshot vs ITS OWN norm"),
@@ -111,9 +123,6 @@ PANELS = (
     ("test_max_rel_err", "max relative projection error", "linear", "precision (test set)"),
     ("gram_cond",        "Gram condition number",         "linear", "conditioning"),
     ("e_orth_mean",      "mean $e_{orth}$",               "linear", "orthogonality (Eq. 41)"),
-    # log, with a known and accepted cost: NMF issues no constrained solves, so all 346
-    # of its cells are exactly 0 and it does not render on this axis at all. See
-    # LOG_AXIS_DROPS_ZEROS.
     ("calls_total",      "constrained solver calls",      "linear", "offline cost"),
 )
 
@@ -301,10 +310,12 @@ def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
     snapshots generate. A method can be identical on the first and very different on the
     second -- which is exactly what mCPG does.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.0))
+    fig, axes = plt.subplots(3, 2, figsize=(11.5, 12.0))
     drawn = 0
     for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), CONE_PANELS):
         drawn += _panel(ax, series, column, ylabel, yscale, title)
+    for ax in axes.ravel()[len(CONE_PANELS):]:
+        ax.set_axis_off()
     if not drawn:
         plt.close(fig)
         return None
@@ -343,12 +354,15 @@ def figure_reference(dataset: str, series, out_dir: Path) -> Path | None:
 
     err_col, err_title = error_column(series)
     panels = list(PANELS + CONE_PANELS)
-    fig, axes = plt.subplots(4, 2, figsize=(11.5, 15.0))
+    nrows = -(-len(panels) // 2)
+    fig, axes = plt.subplots(nrows, 2, figsize=(11.5, 3.75 * nrows))
     drawn = 0
     for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), panels):
         if column == "test_max_rel_err":
             column, title = err_col, err_title
         drawn += _panel(ax, ref, column, ylabel, yscale, title, only=set(ref))
+    for ax in axes.ravel()[len(panels):]:
+        ax.set_axis_off()
     if not drawn:
         plt.close(fig)
         return None
@@ -378,7 +392,8 @@ def figures_reference_split(dataset: str, series, out_dir: Path) -> list[Path]:
     names = {"test_max_rel_err": "precision", "gram_cond": "conditioning",
              "e_orth_mean": "orthogonality", "calls_total": "offline_cost",
              "cover_mean_err": "cone_missed", "excess_mean_err": "cone_excess",
-             "cone_hausdorff": "cone_two_sided", "aperture_mean_deg": "aperture"}
+             "cone_hausdorff": "cone_two_sided", "aperture_mean_deg": "aperture",
+             "section_width_ratio": "cone_extent"}
     written: list[Path] = []
     for column, ylabel, yscale, title in PANELS + CONE_PANELS:
         name = names[column]
