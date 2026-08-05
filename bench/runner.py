@@ -88,9 +88,10 @@ def _subsample(dataset: Dataset, cap: int | None) -> Dataset:
     # surfaces much later as `AttributeError: 'dict' object has no attribute 'is_field'`
     # the first time a figure asks the dataset how to draw itself.
     order = sorted(keep)
-    original_B = dataset.B_of_mu
-    fields["B_of_mu"] = (None if original_B is None
-                         else (lambda j, o=order, f=original_B: f(o[j])))
+    for field in ("B_of_mu", "rhs_of_mu", "gap_of_mu"):
+        original = getattr(dataset, field)
+        fields[field] = (None if original is None
+                         else (lambda j, o=order, f=original: f(o[j])))
     fields["A"] = dataset.A
     fields["geometry"] = dataset.geometry
     return Dataset(**fields)
@@ -132,6 +133,10 @@ def run_cell(dataset: Dataset, method_key: str, *, delta=None, R=None,
         row.update(metrics.precision.evaluate(dataset, result))
         row.update(metrics.performance.evaluate(dataset, result))
         row.update(metrics.cone_geometry.evaluate(dataset, result))
+        # Solves the reduced problem rather than scoring the cone against snapshots.
+        # Silently empty on datasets that ship no operator/load/obstacle -- see
+        # Dataset.supports_online.
+        row.update(metrics.online.evaluate(dataset, result))
         row.update(metrics.stability.evaluate(
             dataset, result, with_infsup=with_infsup and dataset.supports_infsup))
         if with_determinism:

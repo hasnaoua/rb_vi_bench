@@ -83,6 +83,40 @@ def cardinality_table(rows: list[dict], dataset: str, R: int) -> str:
     )
 
 
+def online_table(rows: list[dict], dataset: str, R: int) -> str:
+    """Solved error of the reduced saddle-point problem, at matched cardinality."""
+    sel = [r for r in rows
+           if r.get("dataset") == dataset and r.get("mode") == "cardinality"
+           and not r.get("skip_reason") and _num(r, "R_requested") == R
+           and not math.isnan(_num(r, "online_primal_mean_rel"))]
+    if not sel:
+        return ""
+    body = [[
+        r["method_label"],
+        _fmt(_num(r, "R"), ".0f"),
+        _fmt(_num(r, "online_primal_mean_rel"), ".3e"),
+        _fmt(_num(r, "online_primal_max_rel"), ".3e"),
+        _fmt(_num(r, "online_dual_mean_rel"), ".3e"),
+        _fmt(_num(r, "online_dual_max_rel"), ".3e"),
+    ] for r in sorted(sel, key=lambda r: _num(r, "online_primal_mean_rel"))]
+    ref = sel[0]
+    body.append([
+        "-- full training cone --", "",
+        _fmt(_num(ref, "online_primal_fullcone"), ".3e"), "",
+        _fmt(_num(ref, "online_dual_fullcone"), ".3e"), "",
+    ])
+    return _table(
+        f"{dataset} -- SOLVED error at R={R}  (reduced saddle-point problem, "
+        f"N_primal={_fmt(_num(ref, 'online_N_primal'), '.0f')})",
+        ["method", "R", "primal_mean", "primal_max", "dual_mean", "dual_max"],
+        body,
+        "This SOLVES the reduced problem instead of projecting snapshots onto the cone; "
+        "the two are different functionals and can disagree. The full-cone row is a "
+        "reference, NOT a lower bound -- the solve minimizes over the cone rather than "
+        "projecting onto it, so a smaller cone can land closer.",
+    )
+
+
 def infsup_table(rows: list[dict], dataset: str, delta: float) -> str:
     sel = [r for r in rows
            if r.get("dataset") == dataset and r.get("mode") == "tolerance"
@@ -160,6 +194,7 @@ def main(argv=None) -> int:
             chunks.append(infsup_table(grid, ds, d))
         for R in cards:
             chunks.append(cardinality_table(grid, ds, R))
+            chunks.append(online_table(grid, ds, R))
     if agree:
         chunks.append(agreement_table(agree))
     chunks.append(skip_summary(grid))

@@ -74,9 +74,9 @@ def _toy_bee20() -> Dataset:
     [NDEE22]'s PGA has no online cost to remove here -- that vacuity is a documented
     finding, not a defect of the dataset.
     """
-    from toy_problem import generate_snapshots
+    from toy_problem import generate_snapshots, obstacle_gap
 
-    S_pri, S_du, params, A, _F = generate_snapshots(N=60, n_train=40, seed=0)
+    S_pri, S_du, params, A, F = generate_snapshots(N=60, n_train=40, seed=0)
     n = S_du.shape[1]
     idx = np.arange(n)
     # Deterministic interleaved split: no ordering structure in the sampled mu, so a
@@ -95,6 +95,10 @@ def _toy_bee20() -> Dataset:
         primal_snapshots=S_pri,
         A=A,
         B_of_mu=lambda i, B=B: B,
+        # The load and the obstacle the parameter actually moves, so the reduced
+        # saddle-point problem can be solved rather than only scored against snapshots.
+        rhs_of_mu=lambda i, F=F: F[:, i],
+        gap_of_mu=lambda i, p=params: obstacle_gap(60, p[i]),
     )
 
 
@@ -168,6 +172,11 @@ def _obstacle_ndee22() -> Dataset:
         primal_snapshots=U,
         A=hf.K,
         B_of_mu=lambda i, hf=hf, p=all_params: hf.B(p[i]),
+        # f and g are parameter-INDEPENDENT here; mu enters only through B(mu), which
+        # is the one structural feature [NDEE22] §5.1 turns on. Both are still exposed
+        # per index so the metric needs no special case.
+        rhs_of_mu=lambda i, hf=hf: hf.f,
+        gap_of_mu=lambda i, hf=hf: hf.g,
     )
 
 

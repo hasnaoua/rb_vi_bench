@@ -116,6 +116,13 @@ class Dataset:
     primal_snapshots: np.ndarray | None = None   # (dim_primal, n)
     A: np.ndarray | None = None                  # primal stiffness / energy matrix
     B_of_mu: Callable[[int], np.ndarray] | None = None   # index -> B(mu_i)
+    #: The remaining data of the high-fidelity problem, needed to actually SOLVE the
+    #: reduced system rather than only to score a cone against snapshots. Both are
+    #: indexed by snapshot, because the load and the obstacle are what the parameter
+    #: moves. Only sources that expose their HF assembly can supply them; without them
+    #: ``metrics.online`` reports nothing rather than inventing a right-hand side.
+    rhs_of_mu: Callable[[int], np.ndarray] | None = None   # index -> f(mu_i)
+    gap_of_mu: Callable[[int], np.ndarray] | None = None   # index -> g(mu_i)
     mass: np.ndarray | None = None               # Gram matrix of ||.||_Lambda
     #: How a snapshot lays out in space (see ``bench.geometry``). Only affects how
     #: snapshots are *drawn*; every metric is basis-independent and ignores it. Absent
@@ -217,3 +224,17 @@ class Dataset:
     @property
     def supports_infsup(self) -> bool:
         return self.A is not None and self.B_of_mu is not None
+
+    @property
+    def supports_online(self) -> bool:
+        """Can the reduced saddle-point problem actually be solved for this dataset?
+
+        Every other metric family scores a cone against snapshots, which needs only the
+        snapshots. Solving [BEE20] Eq. (53) needs the problem itself: the operator, the
+        load, the obstacle, and primal snapshots to build ``V_N`` from. Sources that
+        ship only a snapshot matrix cannot support it, and must report nothing rather
+        than a number derived from a fabricated right-hand side.
+        """
+        return (self.A is not None and self.B_of_mu is not None
+                and self.rhs_of_mu is not None and self.gap_of_mu is not None
+                and self.primal_snapshots is not None)

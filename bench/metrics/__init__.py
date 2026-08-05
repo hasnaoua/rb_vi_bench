@@ -14,6 +14,6 @@ family produced which column.
 
 from __future__ import annotations
 
-from . import agreement, cone_geometry, performance, precision, stability
+from . import agreement, cone_geometry, online, performance, precision, stability
 
 __all__ = ["agreement", "cone_geometry", "performance", "precision", "stability"]

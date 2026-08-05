@@ -1694,6 +1694,96 @@ def test_conditioning_axis_is_bounded_at_numerical_singularity():
             assert column not in NUMERICAL_CEILING, column
 
 
+def test_general_solve_matches_the_reference_when_B_is_identity():
+    """The generalized solve must BE rb_online.solve_reduced wherever that one applies.
+
+    solve_reduced hardcodes B_hat = Xi.T @ V, i.e. K = I. That is right for toy_bee20 and
+    unusable for obstacle_ndee22, where the multiplier lives on 40 collocation points and
+    the displacement on ~200 nodes -- Xi.T @ V does not even have compatible shapes. So a
+    generalized version is necessary, and the risk it introduces is drift from the
+    reference. This pins them together on the dataset where both can run.
+    """
+    from rb_online import solve_reduced
+
+    from bench.metrics.online import primal_basis, solve_reduced_general
+
+    ds = ds_mod.load("toy_bee20")
+    V = primal_basis(ds)
+    Xi = METHODS["cpg_bee20"].fit(ds, R=6).generators
+    B = ds.B_of_mu(0)
+    assert np.array_equal(B, np.eye(B.shape[0])), "this dataset's B must be the identity"
+
+    for q in np.asarray(ds.test_idx, int)[:6]:
+        f, gap = ds.rhs_of_mu(int(q)), ds.gap_of_mu(int(q))
+        u_ref, lam_ref = solve_reduced(ds.A, f, gap, V, Xi)
+        u_gen, lam_gen = solve_reduced_general(ds.A, f, gap, V, Xi, B)
+        assert np.allclose(u_gen, u_ref, rtol=1e-9, atol=1e-12)
+        assert np.allclose(lam_gen, lam_ref, rtol=1e-9, atol=1e-12)
+
+
+def test_online_metric_is_reported_only_where_the_problem_is_available():
+    """Solving needs the operator, load and obstacle -- not every source ships them.
+
+    A dataset with only a snapshot matrix must report NOTHING here, rather than a number
+    resting on an invented right-hand side. The two that can solve must actually do so.
+    """
+    from bench import metrics
+
+    for key in ("toy_bee20", "obstacle_ndee22"):
+        ds = ds_mod.load(key)
+        assert ds.supports_online, key
+        row = metrics.online.evaluate(ds, METHODS["cpg_bee20"].fit(ds, R=5))
+        assert row["online_primal_mean_rel"] > 0.0
+        assert row["online_dual_mean_rel"] > 0.0
+
+    for key in ("gaussian_synth", "fem_lambda", "hertz_2d"):
+        ds = ds_mod.load(key)
+        assert not ds.supports_online, key
+        assert metrics.online.evaluate(ds, METHODS["cpg_bee20"].fit(ds, R=5)) == {}
+
+
+def test_solved_error_is_not_the_projection_error():
+    """The two are different functionals of the same cone, which is why this metric exists.
+
+    The reduced solve minimizes an energy over W_R^+; it does not project the true
+    multiplier onto it. If solved error merely tracked projection error the metric would
+    be redundant, so the distinction is asserted rather than assumed.
+    """
+    from bench import metrics
+
+    ds = ds_mod.load("toy_bee20")
+    for R in (4, 6, 8):
+        res = METHODS["cpg_bee20"].fit(ds, R=R)
+        proj = metrics.precision.evaluate(ds, res)["test_max_rel_err"]
+        solved = metrics.online.evaluate(ds, res)["online_dual_mean_rel"]
+        assert not math.isclose(proj, solved, rel_tol=1e-3), (R, proj, solved)
+
+
+def test_full_cone_reference_is_not_advertised_as_a_lower_bound():
+    """Methods do come in under it, so it must not be read as a floor.
+
+    Enlarging the cone can overshoot: the solve minimizes over W_R^+ rather than
+    projecting onto it. Sweeping R over both supported datasets, a good fraction of
+    comparisons land below the full-cone reference -- so the column is named
+    ``fullcone``, not ``floor``, and this test keeps that honest.
+    """
+    from bench import metrics
+
+    below = total = 0
+    for key in ("toy_bee20", "obstacle_ndee22"):
+        ds = ds_mod.load(key)
+        for R in (7, 9, 11):
+            for m in ("cpg_bee20", "mcpg_ndee22", "nmf_s0"):
+                row = metrics.online.evaluate(ds, METHODS[m].fit(ds, R=R))
+                if not row:
+                    continue
+                total += 1
+                below += row["online_primal_mean_rel"] < row["online_primal_fullcone"]
+    assert total > 0
+    assert below > 0, "if nothing ever beats it, the naming should be revisited"
+    assert not any("floor" in k for k in row), "the column must not be called a floor"
+
+
 def test_axes_are_linear_except_the_documented_exception():
     """No panel transforms its values, apart from conditioning, which earns it.
 

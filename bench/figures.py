@@ -131,6 +131,13 @@ CONE_PANELS = (
 EXTRA_SPLIT_PANELS = (
     ("test_max_rel_err_persnap", "max per-snapshot relative error", "linear",
      "precision, each snapshot vs ITS OWN norm"),
+    # SOLVED error: the reduced saddle-point problem actually solved at each held-out
+    # parameter, not the cone scored against snapshots. Empty on datasets that ship no
+    # operator, load and obstacle, which is most of them -- see Dataset.supports_online.
+    ("online_primal_mean_rel", "mean relative error in $u$", "linear",
+     "SOLVED primal error (reduced saddle-point problem)"),
+    ("online_dual_mean_rel", r"mean relative error in $\lambda$", "linear",
+     "SOLVED dual error (reduced saddle-point problem)"),
 )
 
 #: The single column plotted on a log axis, and why it earns the exception.
@@ -145,6 +152,25 @@ EXTRA_SPLIT_PANELS = (
 #: a panel that shows one late excursion and nothing else. It is the one quantity in this
 #: benchmark that is logarithmic by nature.
 LOG_AXIS_EXCEPTIONS: frozenset[str] = frozenset({"gram_cond"})
+
+#: File stem for each metric's standalone PNG. One source for BOTH split paths -- the
+#: per-metric figures and the reference-baseline ones -- because they used to carry
+#: separate copies and drifted: the solved-error panels were added to one and fell back to
+#: raw column names in the other. A column absent here keeps its column name.
+SPLIT_NAMES: dict[str, str] = {
+    "test_max_rel_err": "precision",
+    "test_max_rel_err_persnap": "precision_persnap",
+    "gram_cond": "conditioning",
+    "e_orth_mean": "orthogonality",
+    "calls_total": "offline_cost",
+    "cover_mean_err": "cone_missed",
+    "excess_mean_err": "cone_excess",
+    "cone_sym_err": "cone_two_sided",
+    "section_extent": "cone_extent",
+    "aperture_mean_deg": "aperture",
+    "online_primal_mean_rel": "solved_primal",
+    "online_dual_mean_rel": "solved_dual",
+}
 
 #: Values a column cannot meaningfully exceed, used to bound the AXIS rather than to
 #: alter any datum. Nothing is dropped or transformed: points above the ceiling still
@@ -335,18 +361,10 @@ def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
 
     written: list[Path] = []
     for column, ylabel, yscale, title in PANELS + EXTRA_SPLIT_PANELS:
-        name = column
+        name = SPLIT_NAMES.get(column, column)
         if column == "test_max_rel_err":
             column, title = err_col, err_title
-            name = "precision"
-        elif column == "gram_cond":
-            name = "conditioning"
-        elif column == "e_orth_mean":
-            name = "orthogonality"
-        elif column == "calls_total":
-            name = "offline_cost"
         elif column == "test_max_rel_err_persnap":
-            name = "precision_persnap"
             # Same no-split fallback the shared column gets: physics has no test set, so
             # its test column is nan throughout and the panel would come out blank.
             if err_col == "train_max_rel_err":
@@ -456,11 +474,7 @@ def figures_reference_split(dataset: str, series, out_dir: Path) -> list[Path]:
         return []
     err_col, err_title = error_column(series)
     out = layout.ensure(layout.dataset_dir(out_dir, dataset) / "orthant")
-    names = {"test_max_rel_err": "precision", "gram_cond": "conditioning",
-             "e_orth_mean": "orthogonality", "calls_total": "offline_cost",
-             "cover_mean_err": "cone_missed", "excess_mean_err": "cone_excess",
-             "cone_sym_err": "cone_two_sided", "aperture_mean_deg": "aperture",
-             "section_extent": "cone_extent"}
+    names = SPLIT_NAMES
     written: list[Path] = []
     for column, ylabel, yscale, title in PANELS + CONE_PANELS:
         name = names[column]
