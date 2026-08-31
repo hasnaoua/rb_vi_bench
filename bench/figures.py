@@ -20,11 +20,11 @@ Four comparison panels per dataset, one line per method:
   that means "issues none", not "is free".
 
 The ``orthant`` and ``pod_control`` references are kept off the *comparison* axes -- see
-``FIGURE_EXCLUDED`` -- because they sit orders of magnitude from the methods being
-compared and would cost the shared axis its resolution. They are not hidden: they get
-their own figure per dataset (``reference_orthant.png``, and one panel per metric under
-``<dataset>/orthant/`` with ``--split``) carrying every panel the comparison figures do.
-Alone on their own axes there is no shared range to protect.
+``plotting.FIGURE_EXCLUDED`` -- because they sit orders of magnitude from the methods
+being compared and would cost the shared axis its resolution. They are not hidden: they
+get their own figure per dataset (``reference_orthant.png``, and one panel per metric
+under ``<dataset>/orthant/`` with ``--separate``) carrying every panel the comparison
+figures do. Alone on their own axes there is no shared range to protect.
 
 **Every axis is linear. No transformation is applied to any plotted value.** Values
 appear at the coordinate the data puts them, which is the only way the figures can be
@@ -67,29 +67,9 @@ from . import _paths  # noqa: F401  -- forces the Agg backend before pyplot is i
 import matplotlib.pyplot as plt
 import numpy as np
 
-from . import layout
+from . import cli, layout
+from .plotting import FIGURE_EXCLUDED, discard, save, style_for
 from .tabular import num as _num, read_rows
-
-RESULTS = _paths.ROOT / "results"
-
-# Stable per-method styling, so a method keeps its colour across every figure.
-# Families share a hue: CPG blues, mCPG greens, ADG oranges, baselines grey/red.
-STYLE: dict[str, dict] = {
-    "cpg_bee20":   dict(color="#1f4e9c", marker="o", ls="-",  label="CPG [BEE20]"),
-    "cpg_ndee22":  dict(color="#3a7bd5", marker="s", ls="-",  label="CPG [NDEE22]"),
-    "cpg_greedy":  dict(color="#7fb2f0", marker="^", ls="--", label="CPG (greedy.core)"),
-    "mcpg_ndee22": dict(color="#1b7f4f", marker="o", ls="-",  label="mCPG [NDEE22]"),
-    "mcpg_greedy": dict(color="#5cc98d", marker="^", ls="--", label="mCPG (greedy.core)"),
-    "adg":         dict(color="#e8760a", marker="D", ls="-",  label="ADG (batch normalized)"),
-    "adg_raw":     dict(color="#f0b27a", marker="d", ls=":",  label="ADG (un-normalized)"),
-    "adg_momentum": dict(color="#a04000", marker="*", ls="-.",
-                         label="ADG (momentum stop)"),
-    "nmf_s0":      dict(color="#c0392b", marker="v", ls="-",  label="NMF (seed 0)"),
-    "nmf_s1":      dict(color="#d98880", marker="v", ls=":",  label="NMF (seed 1)"),
-    "nmf_s2":      dict(color="#e6b0aa", marker="v", ls=":",  label="NMF (seed 2)"),
-    "orthant":     dict(color="#6c3483", marker="P", ls="--", label=r"orthant $W^+$"),
-    "pod_control": dict(color="#7f8c8d", marker="x", ls="--", label="POD (control)"),
-}
 
 #: Cone-geometry panels: how much of ``span_+{all snapshots}`` a reduced cone captures,
 #: how wide it opens, and how far it reaches outside. See ``metrics.cone_geometry``.
@@ -126,11 +106,21 @@ CONE_PANELS = (
      "conditioning (mean pairwise angle, NOT an extent)"),
 )
 
-#: Extra split figures, written only by ``--split``. Kept out of ``PANELS`` so the
+#: Extra split figures, written only by ``--separate``. Kept out of ``PANELS`` so the
 #: comparison layout stays a 2x2 grid.
 EXTRA_SPLIT_PANELS = (
     ("test_max_rel_err_persnap", "max per-snapshot relative error", "linear",
      "precision, each snapshot vs ITS OWN norm"),
+    # The training error on its own axes, under both normalizations. It appears in the
+    # comparison panel only as a dotted overlay -- deliberately faint there, since the
+    # subject of that figure is generalization -- but it is a quantity in its own right:
+    # it is what every greedy actually minimizes, and it is monotone in R by construction
+    # for a nested cone, so it is the curve that shows whether a method is converging at
+    # all as opposed to converging *usefully*. See also ``figure_train_vs_test``.
+    ("train_max_rel_err", "max relative projection error", "linear",
+     "precision (TRAINING set)"),
+    ("train_max_rel_err_persnap", "max per-snapshot relative error", "linear",
+     "precision (TRAINING set), each snapshot vs ITS OWN norm"),
     # SOLVED error: the reduced saddle-point problem actually solved at each held-out
     # parameter, not the cone scored against snapshots. Empty on datasets that ship no
     # operator, load and obstacle, which is most of them -- see Dataset.supports_online.
@@ -160,6 +150,8 @@ LOG_AXIS_EXCEPTIONS: frozenset[str] = frozenset({"gram_cond"})
 SPLIT_NAMES: dict[str, str] = {
     "test_max_rel_err": "precision",
     "test_max_rel_err_persnap": "precision_persnap",
+    "train_max_rel_err": "precision_train",
+    "train_max_rel_err_persnap": "precision_train_persnap",
     "gram_cond": "conditioning",
     "e_orth_mean": "orthogonality",
     "calls_total": "offline_cost",
@@ -201,11 +193,15 @@ PANELS = (
 def error_column(series) -> tuple[str, str]:
     """Pick the error column a dataset can actually support.
 
-    ``physics`` has **no train/test split** -- ``greedy_algos``' physics pipeline builds
-    and evaluates on the whole dataset deliberately -- so its ``test_max_rel_err`` is
-    ``nan`` throughout and a test-error panel comes out blank. Fall back to the training
-    error and say so in the title, rather than shipping an empty axes that reads like
-    missing data.
+    A source that ships no train/test split has ``test_max_rel_err`` ``nan`` throughout,
+    so a test-error panel comes out blank. Fall back to the training error and say so in
+    the title, rather than shipping an empty axes that reads like missing data.
+
+    No registered dataset is in that state any more -- ``physics`` was the last one, and
+    it now carries the 50/49 partition its archive ships. The fallback stays because the
+    ``Dataset`` contract still permits a split-less source, and a blank precision panel
+    is exactly the kind of failure that reads as a bug in the runner instead of as an
+    absent split.
     """
     for _R, row in [p for pts in series.values() for p in pts]:
         if not math.isnan(_num(row, "test_max_rel_err")):
@@ -237,16 +233,6 @@ def load_cardinality_rows(path: Path) -> dict[str, dict[str, list[tuple[float, d
     return out
 
 
-#: Measured in every table, never drawn.
-#:
-#: Both are *references*, not competitors, and both sit orders of magnitude away from the
-#: methods being compared -- the orthant because it is the widest admissible cone (90 deg
-#: aperture, near-total excess), POD because its error falls to machine zero past the
-#: numerical rank. Plotting either forces the shared axis to span their range and squeezes
-#: the curves that matter into a thin band. Their numbers stay in ``grid.csv`` and
-#: ``report.txt``, where a reader can consult them without paying for them visually.
-FIGURE_EXCLUDED: frozenset[str] = frozenset({"orthant", "pod_control"})
-
 def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
            only=None):
     """Draw one metric panel.
@@ -263,7 +249,7 @@ def _panel(ax, series, column, ylabel, yscale, title, *, dashed_train=False,
     else:
         series = {m: p for m, p in series.items() if m not in FIGURE_EXCLUDED}
     for method, points in series.items():
-        style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
+        style = style_for(method)
         xs = [R for R, _ in points]
         ys = [_num(row, column) for _, row in points]
         # Only missing values are dropped. Zeros and negatives plot where they fall --
@@ -340,13 +326,123 @@ def figure_for_dataset(dataset: str, series, out_dir: Path) -> Path:
     fig.tight_layout(rect=(0, 0.04, 1, 0.93))
 
     path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "panel.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save(fig, path)
     return path
+
+
+def figure_train_vs_test(dataset: str, series, out_dir: Path) -> Path | None:
+    """Training and test error side by side, on one shared y-axis, per dataset.
+
+    Every source in the merge now carries a train/test split, which makes the pair of
+    curves readable as a pair for the first time. The comparison panel shows the training
+    error only as a dotted overlay, because there its job is to be a reference for the
+    test curve rather than a subject; that is the right call for a four-metric summary
+    and the wrong one if the question is the *gap* itself.
+
+    **The shared y-axis is the whole point of the figure.** Two panels drawn with
+    independent limits each fill their own axes, so a method that generalizes badly looks
+    identical to one that generalizes perfectly -- the eye compares shapes and the scales
+    silently differ, sometimes by orders of magnitude. Forcing one range onto both makes
+    the vertical offset between the panels *be* the generalization gap. A method whose
+    two curves sit at the same height is interpolating; one whose test curve rides above
+    its training curve is not, and by how much is now something you can see rather than
+    something you have to read off two sets of tick labels.
+
+    Both normalizations get a row, because they answer different questions and diverge
+    exactly where snapshot magnitudes spread (see ``metrics.precision``): the shared
+    denominator is comparable across methods and readable against the tolerance that
+    produced it, the per-snapshot one is what ADG's tolerance actually bounds.
+
+    Returns ``None`` for a source with no split -- there is nothing to put in the right
+    column, and half a figure is worse than none.
+    """
+    if not any(not math.isnan(_num(row, "test_max_rel_err"))
+               for pts in series.values() for _R, row in pts):
+        return None
+
+    rows = (
+        ("max relative projection error", r"shared denominator  ($\max_q\|\theta_q\|$)",
+         "train_max_rel_err", "test_max_rel_err"),
+        ("max per-snapshot relative error", "per-snapshot  (each vs its OWN norm)",
+         "train_max_rel_err_persnap", "test_max_rel_err_persnap"),
+    )
+    # Deliberately NOT sharey="row". Sharing the axis makes matplotlib propagate each
+    # ``set_ylim`` to its partner, and ``_panel`` sets limits from the series it just
+    # drew -- so the second panel silently overwrites the first, and a union computed
+    # afterwards reads the same (test) range from both axes. The training curve then
+    # clips out of view, which is the exact failure this figure exists to prevent. Draw
+    # both independently, then union the ranges they each asked for.
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 7.6))
+    drawn = 0
+    for r, (ylabel, what, train_col, test_col) in enumerate(rows):
+        pair, wanted = [], []
+        for c, (column, which) in enumerate(((train_col, "TRAINING"), (test_col, "TEST"))):
+            ax = axes[r, c]
+            if _panel(ax, series, column, ylabel if c == 0 else "", "linear",
+                      f"{which} set — {what}"):
+                drawn += 1
+                wanted.append(ax.get_ylim())
+            pair.append(ax)
+        if wanted:
+            lo, hi = min(w[0] for w in wanted), max(w[1] for w in wanted)
+            for ax in pair:
+                ax.set_ylim(lo, hi)
+
+    if not drawn:
+        discard(fig)
+        return None
+
+    handles, labels = axes[0, 1].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=8, frameon=False,
+               bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(f"{dataset} — training vs held-out error", fontsize=12)
+    fig.text(0.5, 0.945,
+             "each row shares one y-axis, so the vertical offset between the two panels "
+             "IS the generalization gap",
+             ha="center", fontsize=8, color="#555555")
+    fig.tight_layout(rect=(0, 0.04, 1, 0.93))
+    return save(fig, layout.ensure(layout.dataset_dir(out_dir, dataset)) / "train_vs_test.png")
 
 
 #: Kept as an alias so existing imports keep working; the layout module owns it now.
 _slug = layout.slug
+
+
+def _write_panels(dataset: str, series, out: Path, panels, *, only=None,
+                  legend: dict, dashed_train: bool) -> list[Path]:
+    """One standalone PNG per panel spec, into ``out``. Returns what it wrote.
+
+    The scaffolding both ``--separate`` paths need: resolve the error column once, then
+    for each panel open an axes, draw, and either save it or throw it away when the panel
+    turned out to have no curve on it. Written twice it was forty lines of identical code
+    around five differences, which is exactly the shape where a fix lands in one copy.
+
+    A panel with nothing plotted is *discarded*, not saved empty. An empty axes is the
+    worst possible output here: it renders as a valid PNG of a blank grid, which reads as
+    "measured, and the answer was nothing" rather than "not measured".
+    """
+    err_col, err_title = error_column(series)
+    written: list[Path] = []
+    for column, ylabel, yscale, title in panels:
+        name = SPLIT_NAMES.get(column, column)
+        if column == "test_max_rel_err":
+            column, title = err_col, err_title
+        elif column == "test_max_rel_err_persnap" and err_col == "train_max_rel_err":
+            # Same no-split fallback the shared column gets: a split-less source has a
+            # nan test column throughout and the panel would come out blank.
+            column = "train_max_rel_err_persnap"
+            title += " — train (no split)"
+
+        fig, ax = plt.subplots(figsize=(7.0, 4.6))
+        if not _panel(ax, series, column, ylabel, yscale, title, only=only,
+                      dashed_train=dashed_train and column == "test_max_rel_err"):
+            discard(fig)
+            continue
+        ax.set_title(f"{dataset} — {title}", fontsize=11)
+        ax.legend(frameon=False, loc="best", **legend)
+        fig.tight_layout()
+        written.append(save(fig, out / f"{name}.png"))
+    return written
 
 
 def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
@@ -356,35 +452,10 @@ def figures_split(dataset: str, series, out_dir: Path) -> list[Path]:
     file -- the form you want for dropping a single curve into a document, where a 2x2
     grid would have to be cropped.
     """
-    err_col, err_title = error_column(series)
-    ds_dir = layout.ensure(layout.metrics_dir(out_dir, dataset))
-
-    written: list[Path] = []
-    for column, ylabel, yscale, title in PANELS + EXTRA_SPLIT_PANELS:
-        name = SPLIT_NAMES.get(column, column)
-        if column == "test_max_rel_err":
-            column, title = err_col, err_title
-        elif column == "test_max_rel_err_persnap":
-            # Same no-split fallback the shared column gets: physics has no test set, so
-            # its test column is nan throughout and the panel would come out blank.
-            if err_col == "train_max_rel_err":
-                column = "train_max_rel_err_persnap"
-                title += " — train (no split)"
-
-        fig, ax = plt.subplots(figsize=(7.0, 4.6))
-        plotted = _panel(ax, series, column, ylabel, yscale, title,
-                         dashed_train=(column == "test_max_rel_err"))
-        if not plotted:
-            plt.close(fig)
-            continue
-        ax.set_title(f"{dataset} — {title}", fontsize=11)
-        ax.legend(fontsize=7.5, ncol=2, frameon=False, loc="best")
-        fig.tight_layout()
-        path = ds_dir / f"{name}.png"
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        written.append(path)
-    return written
+    return _write_panels(
+        dataset, series, layout.ensure(layout.metrics_dir(out_dir, dataset)),
+        PANELS + EXTRA_SPLIT_PANELS,
+        legend=dict(fontsize=7.5, ncol=2), dashed_train=True)
 
 
 def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
@@ -402,7 +473,7 @@ def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
     for ax in axes.ravel()[len(CONE_PANELS):]:
         ax.set_axis_off()
     if not drawn:
-        plt.close(fig)
+        discard(fig)
         return None
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
@@ -415,8 +486,7 @@ def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
              ha="center", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.93))
     path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "cone_geometry.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save(fig, path)
     return path
 
 
@@ -449,7 +519,7 @@ def figure_reference(dataset: str, series, out_dir: Path) -> Path | None:
     for ax in axes.ravel()[len(panels):]:
         ax.set_axis_off()
     if not drawn:
-        plt.close(fig)
+        discard(fig)
         return None
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
@@ -462,36 +532,25 @@ def figure_reference(dataset: str, series, out_dir: Path) -> Path | None:
         fontsize=11)
     fig.tight_layout(rect=(0, 0.03, 1, 0.96))
     path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "reference_orthant.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save(fig, path)
     return path
 
 
 def figures_reference_split(dataset: str, series, out_dir: Path) -> list[Path]:
-    """One standalone PNG per metric for the references, under ``<dataset>/orthant/``."""
+    """One standalone PNG per metric for the references, under ``<dataset>/orthant/``.
+
+    On their own axes there is no shared range to protect, so the references get every
+    panel the comparison figures carry -- which is the point of the separate directory.
+    No dashed training overlay: these are reference curves, and a second line per method
+    would clutter an axes whose whole job is to be readable in isolation.
+    """
     ref = {m: p for m, p in series.items() if m in FIGURE_EXCLUDED}
     if not any(ref.values()):
         return []
-    err_col, err_title = error_column(series)
-    out = layout.ensure(layout.dataset_dir(out_dir, dataset) / "orthant")
-    names = SPLIT_NAMES
-    written: list[Path] = []
-    for column, ylabel, yscale, title in PANELS + CONE_PANELS:
-        name = names[column]
-        if column == "test_max_rel_err":
-            column, title = err_col, err_title
-        fig, ax = plt.subplots(figsize=(7.0, 4.6))
-        if not _panel(ax, ref, column, ylabel, yscale, title, only=set(ref)):
-            plt.close(fig)
-            continue
-        ax.set_title(f"{dataset} — {title}", fontsize=11)
-        ax.legend(fontsize=8, frameon=False, loc="best")
-        fig.tight_layout()
-        path = out / f"{name}.png"
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        written.append(path)
-    return written
+    return _write_panels(
+        dataset, ref, layout.ensure(layout.dataset_dir(out_dir, dataset) / "orthant"),
+        PANELS + CONE_PANELS,
+        only=set(ref), legend=dict(fontsize=8), dashed_train=False)
 
 
 def figure_precision_overview(all_series, out_dir: Path) -> Path:
@@ -513,19 +572,15 @@ def figure_precision_overview(all_series, out_dir: Path) -> Path:
     fig.suptitle("Precision vs cardinality, all datasets (matched-R mode)", fontsize=13)
     fig.tight_layout(rect=(0, 0.05, 1, 0.96))
     path = layout.ensure(layout.overview_dir(out_dir)) / "precision_all_datasets.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    save(fig, path)
     return path
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="metric-vs-cardinality figures")
-    p.add_argument("--results", type=Path, default=RESULTS,
-                   help="directory holding grid.csv")
-    p.add_argument("--out", type=Path, default=None,
-                   help="where to write PNGs (default: <results>/figures)")
-    p.add_argument("--split", action="store_true",
-                   help="also write one PNG per metric under <out>/<dataset>/")
+    cli.add_results(p)
+    cli.add_out(p, None, what="PNGs (default: <results>/figures)")
+    cli.add_separate(p, what="metric")
     p.add_argument("--no-panel", action="store_true",
                    help="skip the combined four-panel and overview figures")
     args = p.parse_args(argv)
@@ -550,10 +605,11 @@ def main(argv=None) -> int:
         if not args.no_panel:
             written.append(figure_for_dataset(dataset, all_series[dataset], out_dir))
             for extra in (figure_cone_geometry(dataset, all_series[dataset], out_dir),
+                          figure_train_vs_test(dataset, all_series[dataset], out_dir),
                           figure_reference(dataset, all_series[dataset], out_dir)):
                 if extra:
                     written.append(extra)
-        if args.split:
+        if args.separate:
             written.extend(figures_split(dataset, all_series[dataset], out_dir))
             written.extend(figures_reference_split(dataset, all_series[dataset], out_dir))
     if not args.no_panel:

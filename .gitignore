@@ -1,5 +1,17 @@
 .venv/
 __pycache__/
 *.pyc
-results/
 .pytest_cache/
+
+# Generated output. Every artefact under results/ is reproducible from `python -m bench`;
+# nothing in it is an input to anything else.
+results/
+
+# Raw inputs: large, and fetched or unpacked rather than versioned -- the same policy each
+# vendored repo applies to its own data/. README.md is the exception, and documents the
+# rest. See also repos/README.md for the inputs that live inside the source repos.
+data/*
+!data/README.md
+
+# The Lean proof tree keeps its own .lake ignore (proofs/.gitignore); Mathlib's build cache
+# is ~8 GB and is restored with `lake exe cache get`, never committed.

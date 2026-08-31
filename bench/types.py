@@ -41,11 +41,12 @@ import numpy as np
 #: ``Dataset`` construction, before any algorithm sees them.
 #:
 #: They are not data, they are absence of data: a parameter value at which no contact
-#: occurred, so ``lambda = 0`` everywhere. ``physics`` carries two, at norm ~7e-67 against
-#: a typical 2e9. Keeping them corrupts every angle-based method, because normalizing a
-#: zero vector is undefined and any per-snapshot relative criterion sees an arbitrarily
-#: large relative error on a vector that carries no information. It also violates the ADG
-#: spec's own precondition ``S subset R_+^m \ {0}``.
+#: occurred, so ``lambda = 0`` everywhere. ``physics`` carries five -- the low end of its
+#: displacement sweep, before the imposed displacement has closed the initial gap -- at
+#: norm ~7e-67 against a typical 2e9. Keeping them corrupts every angle-based method,
+#: because normalizing a zero vector is undefined and any per-snapshot relative criterion
+#: sees an arbitrarily large relative error on a vector that carries no information. It
+#: also violates the ADG spec's own precondition ``S subset R_+^m \ {0}``.
 #:
 #: The threshold sits at the numerical-zero scale rather than at a "physically small" one:
 #: dropping genuinely small but non-zero contact states would be a modelling decision, not
@@ -102,8 +103,11 @@ class Dataset:
     * ``primal_snapshots`` -- needed for the POD primal basis ``V_N``, hence for
       ``beta^dec``.
     * ``train_idx`` / ``test_idx`` -- when absent, precision metrics report
-      full-set residuals only, which is what ``greedy_algos``' physics pipeline
-      already does deliberately.
+      full-set residuals only. Every source in the merge now carries a split: the
+      sources that ship one of their own (``fem_lambda``, ``physics``, ``hertz_pressure``)
+      use it, and the rest get a deterministic stride. A dataset with no split is still
+      a supported shape -- it is what the tests exercise the fallback with -- but it is
+      no longer a state any registered source is in.
     """
 
     name: str

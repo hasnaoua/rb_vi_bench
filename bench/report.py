@@ -14,12 +14,10 @@ from __future__ import annotations
 import argparse
 import math
 from collections import defaultdict
-from pathlib import Path
 
-from . import _paths
+from . import cli
 from .tabular import fmt as _fmt, num as _num, read_rows as _load
 
-RESULTS = _paths.ROOT / "results"
 
 
 def _table(title: str, headers: list[str], rows: list[list[str]], note: str = "") -> str:
@@ -171,8 +169,8 @@ def skip_summary(rows: list[dict]) -> str:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="render rb_vi_bench results")
-    p.add_argument("--results", type=Path, default=RESULTS)
-    p.add_argument("--out", type=Path, default=None, help="write to a file as well as stdout")
+    cli.add_results(p)
+    cli.add_out(p, None, what="the rendered tables (in addition to stdout)")
     args = p.parse_args(argv)
 
     grid = _load(args.results / "grid.csv")

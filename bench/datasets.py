@@ -12,7 +12,7 @@ hertz_pressure      hertz_pressure           128 x 4k validated physics, 4000 sa
 gaussian_synth      gaussian_synth           200 x n  controlled rank, cheap sweeps
 fem_lambda          Half-disks of Hertz       57 x 50 [BEE20] §6.2, real FEM multipliers
 fem_lambda_pressure Half-disks of Hertz (p.)  57 x 50 same, half-support corrected
-physics             3D Pellet-Cladding       7676x96  76x101 quarter sector, dimension
+physics             3D Pellet-Cladding       7676x99  76x101 quarter sector, dimension
 membrane_2d         membrane_2d              varies   2-D, [NDEE22] §5.1 analogue
 hertz_2d            hertz_2d                 varies   2-D elasticity, §5.2 analogue
 =================== ======================== ======== ================================
@@ -313,28 +313,129 @@ FEM_LAMBDA_ORDERING = """index 0 = symmetry axis, increasing outward; uniform sp
 lambda are nodal forces, and node 0 carries half weight (x2 to compare against pressure)."""
 
 
+#: How the 3-D pellet-cladding parameter axis was established, and what it corrects.
+#:
+#: The matrix in ``data/3D_cladding_split/Contact_forces_data.txt`` is *byte-identical*
+#: to ``greedy_algos/data/physics_data.txt`` -- same 7676 x 99 array, verified elementwise.
+#: What the split archive adds is the two things that file never carried: the 99 parameter
+#: values, and the train/test partition of them.
+#:
+#: That matters, because ``greedy.datasets.physics_dataset`` had to *guess* the parameters.
+#: It hard-codes a 96-point grid from the problem statement (``0.18 + 0.005 i`` for 24
+#: points, then ``0.30 + 0.01 i`` for 72) and reconciles it with 99 columns by dropping the
+#: three leading ones. The shipped grid says that reconciliation was wrong: the true axis is
+#: **99** points, ``0.16..0.30`` in steps of 0.005 (29 points) and ``0.31..1.00`` in steps of
+#: 0.01 (70 points). Column 3 -- the first the old builder kept -- is 0.175, not 0.18, and
+#: the mislabelling propagates all the way to the last column, 1.00 rather than 1.01. Every
+#: physics snapshot was carrying a parameter label one grid step too high.
+#:
+#: What survives the change, and what does not -- both checked in the tests rather than
+#: asserted here:
+#:
+#: 1. **The snapshot set is unchanged.** The old path dropped columns 0-2 and ``Dataset``
+#:    then dropped two more numerically-zero columns, for 94. The new path keeps all 99 and
+#:    ``Dataset`` drops five, for the same 94 -- because columns 0-4 (0.16 to 0.18 mm) are
+#:    exactly the no-contact states, the imposed displacement not yet having closed the
+#:    0.05 mm gap. No snapshot entered or left the problem.
+#: 2. **``Dataset.scale`` is unchanged.** The largest-norm snapshot is column 98, which the
+#:    split puts in *training*, so the denominator both relative tolerances normalize by is
+#:    the same number as before the split existed. A ``delta`` still means what it meant.
+#: 3. **The fits are not.** Half the 94 columns are now held out, so every method selects
+#:    from 47 rather than 94 and its ``R`` at a given tolerance moves accordingly -- ADG's
+#:    two variants stop at R = 4 and R = 12 at delta = 0.05 where they stopped at 6 and 13.
+#:    ``physics`` cells from before the split are not comparable one for one.
+#:
+#: The parameter's *name* is still inferred, not shipped: the archive stores bare numbers.
+#: ``greedy.datasets.physics_dataset`` calls the quantity ``imposed_displacement_mm``, and
+#: the grid family matches, so that is what it is called here.
+PHYSICS_PARAMETER_GRID = """99 imposed axial displacements, 0.16-0.30 mm by 0.005 and
+0.31-1.00 mm by 0.01; the first five are no-contact states. Supersedes the 96-point grid
+greedy_algos inferred, which labelled every snapshot one step too high."""
+
+
+def _load_cladding_split() -> dict[str, np.ndarray]:
+    """Read the pellet-cladding archive and check it is internally consistent.
+
+    Four of the eight files are redundant: ``Contact_forces_train-data.txt`` and its test
+    counterpart are column selections of the full matrix, and the two ``*_params_set``
+    files are the same selections of ``Params_set.txt``. They are read and verified rather
+    than ignored, because a split that disagrees with the matrix it indexes is the one
+    failure mode that would silently produce a *plausible* test error -- fitted on some
+    columns, scored on others, with no symptom anywhere downstream.
+    """
+    root = _paths.CLADDING_SPLIT
+    if not root.is_dir():
+        raise FileNotFoundError(
+            f"{root} not found; unpack data/3D_cladding_split.zip beside it, or point "
+            f"RB_VI_CLADDING_SPLIT at a copy of it -- see data/README.md"
+        )
+
+    def _read(name: str) -> np.ndarray:
+        path = root / name
+        if not path.is_file():
+            raise FileNotFoundError(f"{path} missing from the pellet-cladding archive")
+        return np.loadtxt(path)
+
+    raw = _read("Contact_forces_data.txt")                 # (dim, n), nodes x snapshots
+    params = np.atleast_1d(_read("Params_set.txt"))
+    train_idx = np.atleast_1d(_read("Training_indices_set.txt")).astype(int)
+    test_idx = np.atleast_1d(_read("Ptest_indices_set.txt")).astype(int)
+
+    if raw.ndim != 2 or raw.shape[1] != params.size:
+        raise ValueError(
+            f"pellet-cladding matrix {raw.shape} does not match {params.size} parameters"
+        )
+    both = np.concatenate([train_idx, test_idx])
+    if not np.array_equal(np.sort(both), np.arange(params.size)):
+        raise ValueError(
+            "the shipped train/test indices are not a partition of the "
+            f"{params.size} columns"
+        )
+    for name, idx, expected in (
+        ("Contact_forces_train-data.txt", train_idx, "Training_params_set.txt"),
+        ("Contact_forces_test-data.txt", test_idx, "Ptest_params_set.txt"),
+    ):
+        if not np.array_equal(_read(name), raw[:, idx]):
+            raise ValueError(f"{name} is not the indexed columns of the full matrix")
+        if not np.allclose(np.atleast_1d(_read(expected)), params[idx]):
+            raise ValueError(f"{expected} does not match the indexed parameters")
+
+    return {"snapshots": raw, "params": params,
+            "train_idx": train_idx, "test_idx": test_idx}
+
+
 def _physics() -> Dataset:
-    """High-dimensional physics contact forces: 7676 dofs, 96 snapshots.
+    """High-dimensional physics contact forces: 7676 dofs, 99 parameters, split 50/49.
 
     The only source where ``dim >> n``, so it is what exposes how each method's cost
-    scales with the ambient dimension rather than with the training-set size. No
-    train/test split: ``greedy_algos``' physics pipeline deliberately builds and
-    evaluates on the whole dataset, and its reports summarize full-dataset residuals.
+    scales with the ambient dimension rather than with the training-set size.
+
+    Read from ``data/3D_cladding_split``, which carries the parameter values and the
+    train/test partition that ``greedy_algos/data/physics_data.txt`` does not -- see
+    ``PHYSICS_PARAMETER_GRID`` for what that corrects. The split is the archive's own:
+    alternating columns, training on the even ones. That is a deliberately *dense*
+    interleave rather than a held-out tail, and it is the right one here: the parameter
+    sweeps monotonically from no contact to full contact, so a contiguous test block would
+    be asking every method to extrapolate past its training range instead of to
+    interpolate within it.
+
+    Superseding the npz path is intentional. The old builder produced the same snapshots
+    under a shifted parameter axis and with no split at all, so keeping it as a fallback
+    would have made the reported test error depend on which files happened to be on disk.
     """
-    npz = _paths.GREEDY_ROOT / "results" / "physics" / "dataset" / "physics_dataset.npz"
-    if not npz.is_file():
-        raise FileNotFoundError(
-            f"{npz} not found; build it with `python -m greedy.datasets.physics_dataset` "
-            f"from {_paths.GREEDY_ROOT} (requires data/physics_data.txt)"
-        )
-    d = np.load(npz, allow_pickle=False)
-    S = np.ascontiguousarray(np.asarray(d["snapshots"], float).T)
+    archive = _load_cladding_split()
+    S = np.ascontiguousarray(np.asarray(archive["snapshots"], float))
     return Dataset(
         name="3D Pellet-Cladding",
         snapshots=S,
-        description="pellet-cladding contact, 76x101 quarter sector (no split, by design)",
-        paper="greedy_algos / physics_data",
-        params=np.asarray(d["radii"], float).reshape(-1, 1),
+        description="pellet-cladding contact, 76x101 quarter sector, 50/49 train/test split",
+        paper="3D_cladding_split archive",
+        params=np.asarray(archive["params"], float).reshape(-1, 1),
+        # The five no-contact columns at the low end of the sweep are dropped by
+        # ``Dataset``, which remaps both index arrays onto the surviving columns -- so
+        # these are the archive's indices, into the archive's numbering, as shipped.
+        train_idx=np.asarray(archive["train_idx"], int),
+        test_idx=np.asarray(archive["test_idx"], int),
         # The 7676 entries are a structured theta x z grid, not a sequence; see
         # bench.geometry. Without this they would be drawn against a component index,
         # which slices the cladding surface into 76 strips laid end to end.
@@ -425,7 +526,7 @@ DATASETS: dict[str, DatasetSpec] = {
         DatasetSpec("fem_lambda_pressure", "Half-disks of Hertz (pressure)", _fem_lambda_pressure,
                     "fast", "same, symmetry-node half-support corrected"),
         DatasetSpec("physics", "3D Pellet-Cladding", _physics, "fast",
-                    "7676 dofs; dimension scaling"),
+                    "7676 dofs; dimension scaling; shipped 50/49 split"),
         DatasetSpec("membrane_2d", "2-D membrane", _membrane_2d, "heavy",
                     "497 dual dofs; needs cvxopt"),
         DatasetSpec("hertz_2d", "2-D Hertz contact", _hertz_2d, "heavy",
@@ -445,4 +546,5 @@ def load(key: str) -> Dataset:
     return DATASETS[key].build()
 
 
-__all__ = ["DATASETS", "DatasetSpec", "FAST", "HEAVY", "load"]
+__all__ = ["DATASETS", "DatasetSpec", "FAST", "HEAVY", "PHYSICS_PARAMETER_GRID",
+           "load"]

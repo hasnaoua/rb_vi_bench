@@ -143,7 +143,10 @@ METHODS: dict[str, Method] = {
                 "orthant is reported at matched cardinality only: meeting a tolerance "
                 "needs nearly every coordinate (R = 5001 at delta=0.5, 7351 at "
                 "delta=0.01 on physics, dim 7676) -- itself the finding, but it makes "
-                "every O(R) metric intractable"),
+                "every O(R) metric intractable. Those two R were measured before physics "
+                "carried a split, on all 94 columns rather than the 47 it now trains on; "
+                "re-measuring them means running mCPG to R = 5001, which is the very "
+                "cost this skip exists to avoid"),
         ),
         Method(
             key="pod_control",

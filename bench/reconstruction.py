@@ -14,10 +14,12 @@ number can be read against the tolerance that produced it. That is the wrong ran
 here: under a shared denominator a small-magnitude snapshot looks well reconstructed
 merely because it is small, so "worst" would systematically pick the largest snapshot
 rather than the least well represented. The two differ by 1.5x on ``hertz_pressure`` and
-70x on ``physics``, whose snapshot norms span a factor of 604.
+77x on ``physics``, whose snapshot norms span a factor of 604 -- and on ``physics`` the
+worst snapshot under each convention is a different one. Both are measured on the held-out
+half, which is what this module ranks wherever a source ships a split.
 
 Snapshots whose norm is numerically zero are excluded from the ranking: their relative
-error is 0/0. ``physics`` has two such columns, and they also violate the ADG spec's
+error is 0/0. ``physics`` has five such columns, and they also violate the ADG spec's
 precondition ``S subset R_+^m \\ {0}``.
 
 The reconstruction drawn is always the one the error column actually scored -- NNLS cone
@@ -35,13 +37,11 @@ from . import _paths  # noqa: F401  -- forces Agg before pyplot
 import matplotlib.pyplot as plt
 import numpy as np
 
-from . import datasets as ds_mod, geometry, layout
+from . import cli, datasets as ds_mod, geometry, layout
 from .adapters import DEFAULT_METHODS, METHODS
-from .figures import FIGURE_EXCLUDED, STYLE
 from .metrics.precision import reconstruct, uses_cone_projection
+from .plotting import FIGURE_EXCLUDED, save, style_for
 from .runner import _subsample
-
-RESULTS = _paths.ROOT / "results"
 
 
 def _ranking(dataset, result, columns) -> tuple[np.ndarray, np.ndarray]:
@@ -172,7 +172,7 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
     rel, approx = _ranking(dataset, result, columns)
     if np.all(np.isnan(rel)):
         return []
-    color = STYLE.get(method_key, {}).get("color", "#c0392b")
+    color = style_for(method_key)["color"]
     geom = _geom(dataset)
     x = geom.coords if geom.coords is not None else np.arange(columns.shape[0])
     method_dir = layout.ensure(layout.method_dir(out_dir, name, method_key))
@@ -197,8 +197,7 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
             fig.suptitle(f"{name} — {METHODS[method_key].label} (R={result.R})", fontsize=10)
             fig.tight_layout(rect=(0, 0, 1, 0.94))
         path = method_dir / f"{label}.png"
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        save(fig, path)
         written.append(path)
     return written
 
@@ -252,8 +251,7 @@ def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> 
                  fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.975))
     path = layout.ensure(layout.reconstruction_dir(out_dir, name)) / "all_methods.png"
-    fig.savefig(path, dpi=140, bbox_inches="tight")
-    plt.close(fig)
+    save(fig, path, dpi=140)
     return path
 
 
@@ -271,7 +269,7 @@ def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
     for row, key in enumerate(keys):
         result = fitted[key]
         rel, approx = _ranking(dataset, result, columns)
-        color = STYLE.get(key, {}).get("color", "#c0392b")
+        color = style_for(key)["color"]
         if np.all(np.isnan(rel)):
             for ax in axes[row]:
                 ax.axis("off")
@@ -286,21 +284,19 @@ def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
                  fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.985))
     path = layout.ensure(layout.reconstruction_dir(out_dir, name)) / "all_methods.png"
-    fig.savefig(path, dpi=140, bbox_inches="tight")
-    plt.close(fig)
+    save(fig, path, dpi=140)
     return path
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="best/worst reconstruction figures")
-    p.add_argument("--datasets", nargs="*", default=list(ds_mod.FAST) + list(ds_mod.HEAVY))
-    p.add_argument("--methods", nargs="*", default=list(DEFAULT_METHODS))
+    cli.add_datasets(p, list(ds_mod.FAST) + list(ds_mod.HEAVY))
+    cli.add_methods(p, list(DEFAULT_METHODS), known=sorted(METHODS))
     p.add_argument("--R", type=int, default=8,
                    help="matched cardinality to fit every method at (default 8)")
-    p.add_argument("--subsample", type=int, default=200)
-    p.add_argument("--split", action="store_true",
-                   help="also write one PNG per method under <out>/<dataset>/")
-    p.add_argument("--out", type=Path, default=RESULTS / "figures")
+    cli.add_subsample(p, 200)
+    cli.add_separate(p, what="method")
+    cli.add_out(p, _paths.RESULTS / "figures", what="reconstruction PNGs")
     args = p.parse_args(argv)
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -332,7 +328,7 @@ def main(argv=None) -> int:
         path = figure_for_dataset(dataset, dataset.name, fitted, columns, args.out)
         if path:
             written.append(path)
-        if args.split:
+        if args.separate:
             for m, result in fitted.items():
                 written.extend(figures_for_method(
                     dataset, dataset.name, m, result, columns, args.out))

@@ -41,6 +41,22 @@ BEE20_SRC = REPOS / "rb_contact_cpg" / "src"
 NDEE22_SRC = REPOS / "stable_model_reduction_vi" / "src"
 GREEDY_ROOT = REPOS / "greedy_algos"
 
+#: The 3-D pellet-cladding archive, shipped *with* its parameter values and its
+#: train/test split -- unlike ``greedy_algos/data/physics_data.txt``, which is the same
+#: 7676 x 99 matrix (byte-identical, and now a symlink to this one) with no parameters
+#: attached at all.
+#:
+#: It lives under ``data/`` rather than inside a source repository because no source
+#: repository reads it: ``bench.datasets`` does, and nothing else. That is the rule the
+#: two data locations follow -- a dataset a vendored pipeline addresses by a relative
+#: path stays inside that repo, everything else is here. Like every raw input in this
+#: monorepo it is not versioned; see ``data/README.md``.
+#:
+#: Override with ``RB_VI_CLADDING_SPLIT`` to point at a copy held elsewhere.
+CLADDING_SPLIT = pathlib.Path(
+    os.environ.get("RB_VI_CLADDING_SPLIT", str(ROOT / "data" / "3D_cladding_split"))
+)
+
 # Pin the shared library explicitly rather than relying on the relative walk, so
 # that the monorepo copy wins even if a stray ~/rb_vi_shared is still on disk.
 os.environ.setdefault("RB_VI_SHARED", str(RB_VI_SHARED))
@@ -56,6 +72,18 @@ if _MISSING:
 for _p in (RB_VI_SHARED, BEE20_SRC, NDEE22_SRC):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
+
+
+#: Where the benchmark's artefacts live. Defined once here rather than as
+#: ``RESULTS = _paths.ROOT / "results"`` in each of the five entry points, which is how
+#: it was: five identical lines that had to be kept in step by hand, in modules that
+#: otherwise share nothing.
+RESULTS = ROOT / "results"
+
+#: The dense-cardinality sweep ``decrement`` needs for its ``R`` axis. It is a separate
+#: run because the axis needs CONSECUTIVE cardinalities and the main grid does not carry
+#: them; naming it here keeps the two commands' idea of where it lives in one place.
+SWEEP_DENSE = RESULTS / "sweep_dense"
 
 
 def use_headless_matplotlib() -> None:

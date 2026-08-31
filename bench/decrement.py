@@ -49,11 +49,9 @@ from . import _paths  # noqa: F401  -- forces Agg before pyplot
 
 import matplotlib.pyplot as plt
 
-from . import layout
-from .figures import FIGURE_EXCLUDED, STYLE
+from . import cli, layout
+from .plotting import FIGURE_EXCLUDED, discard, save, style_for
 from .tabular import num as _num, rows_by_dataset_and_method
-
-RESULTS = _paths.ROOT / "results"
 
 
 def decrements_vs_cardinality(points: list[tuple[float, float]]) -> tuple[list, list]:
@@ -95,7 +93,7 @@ def _draw(ax, series, xlabel, title, xscale, mode="cardinality"):
     for method, (xs, ys) in series.items():
         if not xs:
             continue
-        style = STYLE.get(method, dict(color="black", marker=".", ls="-", label=method))
+        style = style_for(method)
         ax.plot(xs, ys, color=style["color"], marker=style["marker"], ls=style["ls"],
                 label=style["label"], ms=4, lw=1.3, alpha=0.9)
         everything.extend(ys)
@@ -123,65 +121,75 @@ def _draw(ax, series, xlabel, title, xscale, mode="cardinality"):
 ERROR_COLUMN = "train_max_rel_err"
 
 
-def figure_vs_cardinality(dataset, rows_by_method, out: Path) -> Path | None:
-    series = {}
-    err_col = ERROR_COLUMN
-    for method, rows in rows_by_method.items():
-        pts = sorted({_num(r, "R"): _num(r, err_col) for r in rows}.items())
-        series[method] = decrements_vs_cardinality(pts)
-
-    fig, ax = plt.subplots(figsize=(8.2, 5.0))
-    if not _draw(ax, series, "cardinality $R$",
-                 f"{dataset} — marginal decrement per added generator", "linear",
-                 mode="cardinality"):
-        plt.close(fig)
-        return None
-    ax.legend(fontsize=7.5, ncol=2, frameon=False, loc="best")
-    fig.text(0.5, -0.02,
-             "fraction of the remaining error removed by one more generator;  "
-             "0 = it bought nothing",
-             ha="center", fontsize=8, color="#555555")
-    fig.tight_layout()
-    path = layout.ensure(layout.decrement_dir(out, dataset)) / "vs_cardinality.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return path
-
-
-def figure_vs_tolerance(dataset, rows_by_method, out: Path) -> Path | None:
-    series = {}
-    err_col = ERROR_COLUMN
-    for method, rows in rows_by_method.items():
+#: The two axes, as data rather than as two near-identical functions.
+#:
+#: They differ in which column indexes the x axis, which direction it runs, which
+#: decrement rule applies, and the strings the reader sees -- and in nothing else.
+#: Written as two functions those differences sat inside forty lines of identical figure
+#: scaffolding, where a change to the scaffolding had to be made twice and a divergence
+#: between the copies would surface only as a figure that looked subtly unlike its twin.
+#:
+#: The captions are not decoration. Neither axis means what it appears to mean at a
+#: glance: on the R axis a zero decrement is a generator that bought nothing rather than
+#: a missing point, and on the epsilon axis the tolerances are *not commensurable across
+#: methods* -- ADG's is per-snapshot, CPG's and mCPG's is a shared absolute threshold --
+#: so the curves may not be read against each other horizontally.
+AXES = {
+    "cardinality": dict(
+        x_column="R",
+        reverse=False,
+        invert_axis=False,
+        decrements=decrements_vs_cardinality,
+        xlabel="cardinality $R$",
+        title="marginal decrement per added generator",
+        caption=("fraction of the remaining error removed by one more generator;  "
+                 "0 = it bought nothing"),
+        stem="vs_cardinality",
+    ),
+    "tolerance": dict(
+        x_column="delta",
         # Loose to tight, i.e. decreasing epsilon.
-        pts = sorted({_num(r, "delta"): _num(r, err_col) for r in rows}.items(),
-                     reverse=True)
-        series[method] = decrements_vs_tolerance(pts)
+        reverse=True,
+        invert_axis=True,
+        decrements=decrements_vs_tolerance,
+        xlabel=r"tolerance $\varepsilon$  (tightening $\rightarrow$)",
+        title="decrement per tolerance step",
+        caption=("epsilon is NOT commensurable across methods: per-snapshot for ADG, "
+                 "shared absolute for CPG/mCPG"),
+        stem="vs_tolerance",
+    ),
+}
+
+
+def figure_for_axis(mode: str, dataset, rows_by_method, out: Path) -> Path | None:
+    """One decrement figure, for whichever of the two axes ``mode`` names."""
+    spec = AXES[mode]
+    series = {}
+    for method, rows in rows_by_method.items():
+        pts = sorted({_num(r, spec["x_column"]): _num(r, ERROR_COLUMN) for r in rows}.items(),
+                     reverse=spec["reverse"])
+        series[method] = spec["decrements"](pts)
 
     fig, ax = plt.subplots(figsize=(8.2, 5.0))
-    if not _draw(ax, series, r"tolerance $\varepsilon$  (tightening $\rightarrow$)",
-                 f"{dataset} — decrement per tolerance step", "linear", mode="tolerance"):
-        plt.close(fig)
+    if not _draw(ax, series, spec["xlabel"], f"{dataset} — {spec['title']}", "linear",
+                 mode=mode):
+        discard(fig)
         return None
-    ax.invert_xaxis()
+    if spec["invert_axis"]:
+        ax.invert_xaxis()
     ax.legend(fontsize=7.5, ncol=2, frameon=False, loc="best")
-    fig.text(0.5, -0.02,
-             "epsilon is NOT commensurable across methods: per-snapshot for ADG, "
-             "shared absolute for CPG/mCPG",
-             ha="center", fontsize=8, color="#555555")
+    fig.text(0.5, -0.02, spec["caption"], ha="center", fontsize=8, color="#555555")
     fig.tight_layout()
-    path = layout.ensure(layout.decrement_dir(out, dataset)) / "vs_tolerance.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return path
+    return save(fig, layout.ensure(layout.decrement_dir(out, dataset)) / f"{spec['stem']}.png")
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="marginal decrement figures")
-    p.add_argument("--cardinality-results", type=Path, default=RESULTS / "sweep_dense",
+    p.add_argument("--cardinality-results", type=Path, default=_paths.SWEEP_DENSE,
                    help="grid with CONSECUTIVE --cardinalities (for the R axis)")
-    p.add_argument("--tolerance-results", type=Path, default=RESULTS,
+    p.add_argument("--tolerance-results", type=Path, default=_paths.RESULTS,
                    help="grid with a tolerance sweep (for the epsilon axis)")
-    p.add_argument("--out", type=Path, default=RESULTS / "figures")
+    cli.add_out(p, _paths.RESULTS / "figures", what="decrement PNGs")
     args = p.parse_args(argv)
 
     written = []
@@ -189,7 +197,7 @@ def main(argv=None) -> int:
     card = args.cardinality_results / "grid.csv"
     if card.is_file():
         for dataset, by_method in rows_by_dataset_and_method(card, "cardinality").items():
-            path = figure_vs_cardinality(dataset, by_method, args.out)
+            path = figure_for_axis("cardinality", dataset, by_method, args.out)
             if path:
                 written.append(path)
     else:
@@ -198,7 +206,7 @@ def main(argv=None) -> int:
     tol = args.tolerance_results / "grid.csv"
     if tol.is_file():
         for dataset, by_method in rows_by_dataset_and_method(tol, "tolerance").items():
-            path = figure_vs_tolerance(dataset, by_method, args.out)
+            path = figure_for_axis("tolerance", dataset, by_method, args.out)
             if path:
                 written.append(path)
     else:

@@ -147,14 +147,20 @@ def per_snapshot_rel_errors(errors: np.ndarray, columns: np.ndarray) -> np.ndarr
       Nothing hides behind anything.
 
     They diverge exactly where snapshot magnitudes spread. On ``physics`` (norms spanning
-    604x) CPG at R=8 reads 0.0117 shared and **0.8137** per-snapshot: one snapshot is 81%
-    unrepresented in its own terms while the headline says 1%.
+    604x) CPG at R=8 reads 0.0106 shared on the held-out half and **0.8137** per-snapshot:
+    one snapshot is 81% unrepresented in its own terms while the headline says 1%.
 
     This is also the convention **ADG optimizes**. Normalizing to ``S_norm`` makes every
     snapshot unit-norm, so its ``epsilon`` bounds ``sin theta_K(x_hat) = e_K(x_hat)``
     per snapshot; CPG and mCPG bound the shared quantity. Reporting only the shared column
     grades ADG on an objective it is not pursuing -- on ``physics`` that inverts the
-    ranking, from ADG 3.4x worse to ADG 9.4x better.
+    ranking, from ADG 3.3x worse to ADG 1.6x better on test, and 3.0x worse to 10.2x
+    better on train.
+
+    The gap between those two inversions is itself informative, and it is what the split
+    bought: the snapshot that is worst in its own terms lives in the *held-out* half, so
+    before ``physics`` had a split the per-snapshot column was reporting how badly the
+    methods represented a snapshot they had all been fitted on.
 
     Snapshots of zero norm are excluded rather than counted as 0/0. ``Dataset`` drops them
     at construction, so this should never fire, but the ratio must not invent a value.
@@ -202,8 +208,8 @@ def evaluate(dataset: Dataset, result: BasisResult) -> dict[str, float]:
         row["test_max_rel_err_persnap"] = float(test_ps.max()) if test_ps.size else 0.0
         row["test_mean_rel_err_persnap"] = float(test_ps.mean()) if test_ps.size else 0.0
     else:
-        # Absent, not zero: ``physics`` has no split by design, and a 0.0 here would
-        # read as a perfect generalization result.
+        # Absent, not zero. A 0.0 here would read as a perfect generalization result
+        # rather than as a source that ships no held-out set to generalize to.
         for key in ("test_max_rel_err", "test_mean_rel_err",
                     "test_max_rel_err_persnap", "test_mean_rel_err_persnap"):
             row[key] = float("nan")

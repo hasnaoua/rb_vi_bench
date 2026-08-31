@@ -34,16 +34,14 @@ import platform
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 import numpy as np
 
-from . import _paths, datasets as ds_mod, metrics
+from . import _paths, cli, datasets as ds_mod, metrics
 from .tabular import write_csv as _write_csv
 from .adapters import CROSS_FAMILY_PAIRS, DEFAULT_METHODS, METHODS
 from .types import Dataset
 
-RESULTS = _paths.ROOT / "results"
 
 # The tolerance grid has to span two orders of magnitude because the datasets differ
 # enormously in how compressible they are. `gaussian_synth` still needs R = 15 at
@@ -112,6 +110,10 @@ def run_cell(dataset: Dataset, method_key: str, *, delta=None, R=None,
         "R_requested": R if R is not None else "",
         "dim": dataset.dim,
         "n_train": dataset.train().shape[1],
+        # Recorded alongside n_train, not derived from it: a reader has to be able to
+        # tell "scored on 47 held-out snapshots" from "scored on the training set
+        # because this source ships no split", and a blank n_test says which.
+        "n_test": dataset.test().shape[1] if dataset.has_split else "",
         "skip_reason": "",
     }
 
@@ -173,23 +175,23 @@ def run_agreement(dataset: Dataset, *, delta: float) -> list[dict]:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="run the rb_vi_bench grid")
-    p.add_argument("--datasets", nargs="*", default=list(ds_mod.FAST),
-                   help=f"default: the fast tier {list(ds_mod.FAST)}")
-    p.add_argument("--methods", nargs="*", default=list(DEFAULT_METHODS),
-                   help="default: one canonical implementation per algorithm; "
-                        f"pass names to widen (all: {sorted(METHODS)})")
+    cli.add_datasets(p, list(ds_mod.FAST))
+    cli.add_methods(p, list(DEFAULT_METHODS), known=sorted(METHODS))
     p.add_argument("--deltas", nargs="*", type=float, default=list(DEFAULT_DELTAS))
     p.add_argument("--cardinalities", nargs="*", type=int, default=list(DEFAULT_CARDINALITIES))
-    p.add_argument("--subsample", type=int, default=None,
-                   help="cap training snapshots (changes the numbers; recorded in output)")
+    cli.add_subsample(p, None)
     p.add_argument("--no-infsup", action="store_true")
     p.add_argument("--no-determinism", action="store_true")
-    p.add_argument("--out", type=Path, default=RESULTS)
+    cli.add_out(p, _paths.RESULTS, what="grid.csv, agreement.csv and manifest.json")
     args = p.parse_args(argv)
 
     started = time.perf_counter()
     grid_rows: list[dict] = []
     agree_rows: list[dict] = []
+    # Which train/test partition each dataset actually ran under, recorded in the
+    # manifest. The CSV carries it per row, but a run is only reproducible if the
+    # split it used is stated once, in the artefact that identifies the run.
+    splits: dict[str, dict] = {}
 
     for ds_key in args.datasets:
         t0 = time.perf_counter()
@@ -200,9 +202,16 @@ def main(argv=None) -> int:
             grid_rows.append({"dataset": ds_key, "skip_reason":
                               f"dataset build failed: {type(exc).__name__}: {exc}"})
             continue
-        print(f"[{ds_key}] dim={dataset.dim} n_train={dataset.train().shape[1]} "
+        split = (f"n_test={dataset.test().shape[1]}" if dataset.has_split
+                 else "no split (train-set errors only)")
+        print(f"[{ds_key}] dim={dataset.dim} n_train={dataset.train().shape[1]} {split} "
               f"infsup={dataset.supports_infsup} ({time.perf_counter()-t0:.1f}s to build)",
               flush=True)
+        splits[dataset.name] = {"dim": dataset.dim,
+                                "n_train": int(dataset.train().shape[1]),
+                                "n_test": (int(dataset.test().shape[1])
+                                           if dataset.has_split else None),
+                                "n_dropped_zero": int(dataset.n_dropped_zero)}
 
         for delta in args.deltas:
             for m in args.methods:
@@ -246,6 +255,7 @@ def main(argv=None) -> int:
         "deltas": args.deltas,
         "cardinalities": args.cardinalities,
         "subsample": args.subsample,
+        "splits": splits,
         "cells_total": len(grid_rows),
         "cells_run": ran,
         "cells_skipped": len(grid_rows) - ran,

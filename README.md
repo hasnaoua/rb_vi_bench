@@ -4,20 +4,56 @@ A benchmark over four merged repositories on reduced-basis model order reduction
 parametrized **variational inequalities** (contact problems), measuring **precision**,
 **stability**, **performance**, and **cross-implementation agreement**.
 
-The four source repositories are preserved intact under `repos/`, with full git history.
-Nothing in them was edited to make the benchmark work.
+The four source repositories are preserved under `repos/`, with full git history. **No
+source file in them was edited to make the benchmark work** — the harness absorbs their
+convention differences in `bench/adapters/` instead, and the duplicate CPG/mCPG
+transcriptions are retained on purpose because they are the *input* to the agreement
+metric. One directory was relocated, not edited: `greedy_algos/theorical proves/` → the
+top-level `proofs/`, for the reason given below.
 
 ```
 rb_vi_bench/
 ├── bench/                  the benchmark harness (this is the new code)
-├── repos/
+│   ├── __main__.py           `python -m bench <command>` — dispatches the five below
+│   ├── runner.py             the grid: methods × datasets × modes → grid.csv
+│   ├── report.py             grid.csv → readable tables
+│   ├── figures.py            metric-vs-cardinality figures
+│   ├── reconstruction.py     best/worst reconstructed snapshot per method
+│   ├── decrement.py          what the next generator actually buys
+│   ├── datasets.py           the dataset registry; types.py  the two data contracts
+│   ├── adapters/             one Method per algorithm, per implementation family
+│   ├── metrics/              precision, cone geometry, stability, performance, online
+│   ├── plotting.py           the method palette and how a figure is saved
+│   ├── cli.py                the argument fragments the five commands share
+│   ├── geometry.py           how a snapshot lays out in space (figures only)
+│   └── layout.py, tabular.py, instrument.py, _paths.py
+├── repos/                  the four source repositories — see repos/README.md
 │   ├── rb_vi_shared/               shared algorithm library  [BEE20] + [NDEE22]
 │   ├── rb_contact_cpg/             [BEE20] Benaceur/Ern/Ehrlacher
 │   ├── stable_model_reduction_vi/  [NDEE22] Niakh/Drouet/Ehrlacher/Ern
 │   └── greedy_algos/               CPG / mCPG / ADG, installable as `greedy`
-├── tests/                  tests for the harness
+├── data/                   raw inputs owned by no source repo — see data/README.md
+│   └── 3D_cladding_split/          the pellet-cladding archive → the `physics` dataset
+├── proofs/                 Lean 4 / Mathlib proofs of the ADG rate and termination
+├── tests/                  one module per layer of bench/, plus shared fixtures
 └── results/                generated output (gitignored)
 ```
+
+Three placement rules, each with a reason a reader can check:
+
+* **`repos/` is flat.** `rb_contact_cpg` and `stable_model_reduction_vi` locate the shared
+  library through their own `_shared_path.py`, which resolves `parents[2] / "rb_vi_shared"`
+  — `src/` → the repo → its parent. All four sitting under one parent is what keeps that
+  walk working unmodified, and hence what keeps the original entrypoints runnable. Nesting
+  or renaming any of them requires setting `RB_VI_SHARED`.
+* **Data sits with whoever reads it.** A dataset a vendored pipeline addresses by a
+  relative path stays inside that repo. `data/` holds what only `bench` reads —
+  currently the pellet-cladding archive. `repos/README.md` has the full table.
+* **`proofs/` is top-level.** The Lean tree is not part of the `greedy` Python package and
+  nothing in `bench` or `greedy` references it; it lived under `greedy_algos/` as
+  `theorical proves/`, a name with a space in it that no tool enjoys, and it is where the
+  8 GB Mathlib build cache accumulates. Its `lakefile.toml` names the *package*, not the
+  directory, so `lake build` is unaffected by the move.
 
 Figures are grouped **per dataset**, since comparing methods only makes sense within one:
 
@@ -26,7 +62,9 @@ results/figures/
 ├── _overview/precision_all_datasets.png     the only cross-dataset figure
 └── <dataset>/
     ├── panel.png                            four metrics in one grid
-    ├── metrics/      precision.png  conditioning.png  orthogonality.png  offline_cost.png
+    ├── train_vs_test.png                    both sets, one shared y-axis per row
+    ├── metrics/      precision.png  precision_train.png  (+ _persnap of each)
+    │                 conditioning.png  orthogonality.png  offline_cost.png
     ├── decrement/    vs_cardinality.png  vs_tolerance.png
     └── reconstruction/
         ├── all_methods.png
@@ -125,30 +163,71 @@ The two `heavy`-tier 2-D datasets additionally need `cvxopt` (`greedy_algos`' op
 .venv/bin/pip install cvxopt
 ```
 
+`physics` reads its snapshots, its parameters and its train/test split from the
+pellet-cladding archive under `data/`, which is raw input and therefore not versioned —
+see `data/README.md` for what the eight files are. Unpack it, or point
+`RB_VI_CLADDING_SPLIT` at a copy held elsewhere:
+
+```bash
+unzip -d data data/3D_cladding_split.zip
+```
+
+Two datasets also need inputs that live inside their own source repository and are built,
+not downloaded — `fem_lambda` wants `lambda_dataset.npz`, which
+`python -m greedy.datasets.lambda_snapshots` produces from `data/FEM_SOLS.zip`. Each
+dataset's build raises with the exact command if its input is missing.
+
+The five commands live behind one entry point. `python -m bench` lists them, and each
+takes `--help` of its own. The longer form — `python -m bench.runner`,
+`python -m bench.figures`, and so on — still works, so saved invocations keep running.
+
+```bash
+.venv/bin/python -m bench          # run  report  figures  reconstruct  decrement
+```
+
 Run the default grid (fast-tier datasets, all methods, four tolerances and four
 cardinalities), then render it:
 
 ```bash
-.venv/bin/python -m bench.runner --subsample 200 --out results
+.venv/bin/python -m bench run --subsample 200 --out results
 ```
 
 ```bash
-.venv/bin/python -m bench.report --results results
+.venv/bin/python -m bench report --results results --out results/report.txt
 ```
 
-Figures (metric vs cardinality, one line per method). `--split` writes one standalone
+Figures (metric vs cardinality, one line per method). `--separate` writes one standalone
 PNG per metric under `<out>/<dataset>/`; without it you get a combined four-panel figure
 per dataset plus a cross-dataset precision overview:
 
 ```bash
-.venv/bin/python -m bench.figures --results results --out results/figures --split
+.venv/bin/python -m bench figures --results results --out results/figures --separate
 ```
+
+**Training and test are drawn both ways.** `train_vs_test.png` puts the two sets in
+adjacent panels — one row per normalization, shared denominator above and per-snapshot
+below — and **forces one y-range onto each row**, so the vertical offset between the
+panels *is* the generalization gap rather than something you have to reconstruct from two
+sets of tick labels. `--separate` additionally writes the training curves as standalone
+panels (`precision_train.png`, `precision_train_persnap.png`) alongside the test ones,
+because the training error answers a different question: it is what every greedy actually
+minimizes and is monotone in `R` for a nested cone, so it shows whether a method is
+converging at all — as opposed to converging *usefully*, which is the test curve's job.
+In the combined `panel.png` the training error stays a faint dotted overlay, where its
+role is a reference for the test curve rather than a subject.
+
+On `physics` the two rows say opposite things, and both are real. Under the shared
+denominator train and test nearly coincide — the archive's split interleaves parameters,
+so every test snapshot interpolates between training ones. Per-snapshot the gap is wide:
+ADG drives its training error to 0.03 by `R=16` while its test error sits flat at 0.52.
+Per-snapshot error is the quantity ADG's tolerance actually bounds, so that is the
+convention in which its optimization is visibly not generalizing.
 
 Marginal decrement `e(n+1) − e(n)` — what the next generator actually buys, all methods
 on one axis, against both `R` and `ε`:
 
 ```bash
-.venv/bin/python -m bench.decrement --cardinality-results results/sweep_dense --tolerance-results results
+.venv/bin/python -m bench decrement --cardinality-results results/sweep_dense --tolerance-results results
 ```
 
 The `R` axis needs a sweep run with **consecutive** `--cardinalities 1 2 3 … N`;
@@ -164,31 +243,46 @@ Reconstruction figures — best and worst represented snapshot per method, per d
 showing the profile rather than a scalar. These fit directly and need no grid CSV:
 
 ```bash
-.venv/bin/python -m bench.reconstruction --R 8 --split --out results/figures
+.venv/bin/python -m bench reconstruct --R 8 --separate --out results/figures
 ```
 
 Best/worst are ranked by **per-snapshot** relative error `‖θ−Π_K θ‖/‖θ‖`, not by the
 shared-denominator column the tables report — under a shared denominator a
 small-magnitude snapshot looks well reconstructed merely because it is small, so "worst"
-would just pick the largest snapshot. The two differ by 1.5× on `hertz_pressure` and 70×
-on `physics`, whose snapshot norms span a factor of 604.
+would just pick the largest snapshot. The two differ by 1.5× on `hertz_pressure` and 77×
+on `physics`, whose snapshot norms span a factor of 604. Ranking is on the held-out half
+wherever a source ships a split, which since the pellet-cladding archive landed includes
+`physics` — reconstructing a *training* snapshot is the easy case, and for the
+selection-based methods a chosen one lies in the cone exactly.
 
 Metric figures read **matched-cardinality rows only**, so feed them a run with a dense
 `--cardinalities` grid — the tolerance sweep is what makes the main grid slow, and
 fixed-`R` fits skip it:
 
 ```bash
-.venv/bin/python -m bench.runner --deltas --cardinalities 1 2 3 4 5 6 8 10 12 14 16 20 24 28 32 40 --no-infsup --no-determinism --subsample 200 --out results/sweep
+.venv/bin/python -m bench run --deltas --cardinalities $(seq 1 40) \
+  --datasets toy_bee20 obstacle_ndee22 hertz_pressure gaussian_synth fem_lambda \
+             fem_lambda_pressure physics membrane_2d hertz_2d \
+  --methods cpg_bee20 mcpg_ndee22 adg adg_momentum nmf_s0 orthant \
+  --no-infsup --no-determinism --subsample 200 --out results/sweep_dense
 ```
+
+`--deltas` with no values switches the tolerance sweep off, which is what makes a
+40-point cardinality grid affordable. The dataset list is spelled out because this run
+includes the two `heavy` sources the default grid leaves out — the decrement figures want
+every dataset, and at fixed `R` even the 2-D FEM models are tractable.
 
 Useful flags: `--datasets`, `--methods`, `--deltas`, `--cardinalities`, `--no-infsup`,
 `--no-determinism`, and `--subsample N` to cap the training set (it changes the numbers
-and is recorded in `results/manifest.json`).
+and is recorded in `results/manifest.json`). `--separate` was called `--split` and still
+answers to it; the old name collided with the train/test split every dataset now has,
+which made it read as if it selected the evaluation set.
 
-Harness tests:
+Harness tests — one module per layer of `bench/`, sharing `tests/_fixtures.py`:
 
 ```bash
-.venv/bin/python -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q                    # all 144
+.venv/bin/python -m pytest tests/test_datasets.py -q    # just the registry
 ```
 
 The original entrypoints still work unchanged, from inside their own directories:
@@ -319,9 +413,44 @@ archive does not carry.
 Eight sources, differing in exactly the ways that matter: whether the constraint
 operator `B` is parameter-dependent (only `obstacle_ndee22` is), whether primal
 snapshots and a stiffness matrix are available for the inf-sup metrics (only
-`toy_bee20` and `obstacle_ndee22`), and the `dim` / `n` ratio (`physics` is 7676 × 96).
+`toy_bee20` and `obstacle_ndee22`), and the `dim` / `n` ratio (`physics` is 7676 × 99).
 The two 2-D sources (`membrane_2d`, `hertz_2d`) are `heavy` tier and opt-in, because
 each costs one FEM solve per parameter.
+
+**Every source now runs a train/test phase.** `fem_lambda`, `hertz_pressure` and
+`physics` use the split their own archive ships; the rest get a deterministic stride, so
+train and test span the same parameter range rather than the stride being a held-out
+tail. Each cell records `n_train` and `n_test` in `grid.csv`, and `manifest.json` states
+the partition every dataset ran under. `Dataset` still permits a split-less source — the
+figures fall back to training error and label the panel — but no registered dataset is
+in that state.
+
+`physics` was the last one that was. It previously read
+`greedy_algos/data/physics_data.txt`, which carries the 7676 × 99 matrix and nothing
+else: no parameters and no split, so `greedy_algos`' pipeline built and evaluated on the
+whole dataset and every `test_*` column came out `nan`. The pellet-cladding archive ships
+the same matrix — verified elementwise — together with the 99 parameter values and a
+50/49 partition of them. Two consequences worth stating, both pinned by tests:
+
+* **The inferred parameter axis was off by one grid step.**
+  `greedy.datasets.physics_dataset` hard-codes a 96-point displacement grid from the
+  problem statement and reconciles it with 99 columns by dropping three. The shipped grid
+  is 99 points — 0.16–0.30 mm by 0.005, then 0.31–1.00 mm by 0.01 — so the first column
+  that builder kept is 0.175 mm, not the 0.18 mm it was labelled, and the error carries
+  through to the last, 1.00 mm rather than 1.01. The snapshots were never wrong; their
+  abscissa was.
+* **The snapshot set did not change, but the training set halved.** The old path
+  dropped three leading columns and `Dataset` then dropped two numerically-zero ones; the
+  new path keeps all 99 and `Dataset` drops five — the same 94 snapshots, because columns
+  0–4 are exactly the no-contact states before the imposed displacement closes the
+  0.05 mm gap. Half of those 94 are now held out, so every method fits on 47 columns
+  rather than 94 and its `R` at a given tolerance moves with them: at `δ=0.05` ADG's two
+  variants now stop at `R=4` and `R=12` where they stopped at 6 and 13. **`physics`
+  numbers from before the split are not comparable cell-for-cell.** What is preserved is
+  the tolerance itself: the largest-norm snapshot falls in the training half, so
+  `Dataset.scale` — the denominator both relative tolerances normalize by — is the same
+  number, and a `δ` still means what it meant. And `test_max_rel_err` is now a real
+  held-out number instead of `nan`.
 
 **No dataset here reproduces a number in either paper's results section.** The 1-D
 toys are deliberate substitutes for `[BEE20]` §6 and `[NDEE22]` §5.1, chosen so the
@@ -336,6 +465,11 @@ source came from, not that it reproduces that paper.
 
 8 datasets × 11 methods × (6 tolerances + 4 cardinalities) = 880 cells, 688 run,
 144 agreement comparisons, ~25 min. Regenerate with the commands above.
+
+That tally predates the pellet-cladding split, so its `physics` rows were fitted on all
+94 columns and carry no test error. Nothing below is a `physics` number, so nothing below
+moves; re-run the wide grid (`--methods` with all eleven) if you want `physics` cells
+that match the rest of `results/`.
 
 **CPG is implementation-independent; mCPG is not.** Across all 144 comparisons:
 

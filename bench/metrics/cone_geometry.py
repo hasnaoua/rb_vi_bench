@@ -385,6 +385,8 @@ def reach_outside(dataset: Dataset, generators: np.ndarray) -> dict[str, float]:
 #: orthant baseline in tolerance mode -- on ``physics`` (dim 7676) it needs R = 5001 at
 #: delta = 0.5 and R = 7351 at delta = 0.01, which is itself the informative result and is
 #: still reported. Only the O(R) sampled geometry is dropped, with a reason recorded.
+#: (Both R predate ``physics``' train/test split and were measured on all 94 columns; the
+#: threshold does not depend on their exact values, only on their order of magnitude.)
 MAX_R_FOR_SAMPLING = 512
 
 
