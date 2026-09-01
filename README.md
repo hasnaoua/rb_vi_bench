@@ -261,9 +261,8 @@ fixed-`R` fits skip it:
 
 ```bash
 .venv/bin/python -m bench run --deltas --cardinalities $(seq 1 40) \
-  --datasets toy_bee20 obstacle_ndee22 hertz_pressure gaussian_synth fem_lambda \
-             fem_lambda_pressure physics membrane_2d hertz_2d \
-  --methods cpg_bee20 mcpg_ndee22 adg adg_momentum nmf_s0 orthant \
+  --datasets fem_lambda physics membrane_2d \
+  --methods cpg_bee20 mcpg_ndee22 adg adg_momentum adg_k0 nmf_s0 orthant \
   --no-infsup --no-determinism --subsample 200 --out results/sweep_dense
 ```
 
@@ -408,16 +407,37 @@ the difference, so the pair can never silently become redundant.
 The residual ±8% mesh grading is **not** corrected; that needs tributary lengths the
 archive does not carry.
 
+> **Note on the findings below and above.** Several are quoted from measurements on
+> datasets no longer in the registry — `toy_bee20`, `obstacle_ndee22`, `hertz_pressure`,
+> `gaussian_synth`, `fem_lambda_pressure`, `hertz_2d`. The numbers were real when taken
+> and are kept because they document *why* the code is shaped as it is, but they cannot
+> be reproduced from a current run. Anything measured on `fem_lambda`, `physics` or
+> `membrane_2d` still can be.
+
 ## What the datasets are, and what they are not
 
-Eight sources, differing in exactly the ways that matter: whether the constraint
-operator `B` is parameter-dependent (only `obstacle_ndee22` is), whether primal
-snapshots and a stiffness matrix are available for the inf-sup metrics (only
-`toy_bee20` and `obstacle_ndee22`), and the `dim` / `n` ratio (`physics` is 7676 × 99).
-The two 2-D sources (`membrane_2d`, `hertz_2d`) are `heavy` tier and opt-in, because
-each costs one FEM solve per parameter.
+Three sources, all contact problems on real geometry:
 
-**Every source now runs a train/test phase.** `fem_lambda`, `hertz_pressure` and
+| key | reported name | dim × n | tier |
+|---|---|---|---|
+| `fem_lambda` | Half-disks of Hertz | 57 × 50 | fast |
+| `physics` | 3D Pellet-Cladding | 7676 × 94 | fast |
+| `membrane_2d` | 2-D membrane | 497 × 125 | heavy (needs `cvxopt`) |
+
+They differ in the way that matters most for a cone method — the `dim`/`n` ratio spans
+57 × 50 to 7676 × 94 — and in geometry: a mirrored contact line, a 76 × 101 surface grid,
+and a scattered 2-D patch. `membrane_2d` is `heavy` tier and opt-in, because it costs one
+FEM solve per parameter.
+
+**None of them carries a stiffness matrix or a constraint operator**, so the inf-sup
+metrics ([NDEE22] Eq. 14/18/30) and the solved-error metric (`metrics.online`) report
+nothing on any of them. Both remain implemented and generic: any `Dataset` supplied with
+`A`, `B_of_mu`, `rhs_of_mu`, `gap_of_mu` and primal snapshots revives them, and their
+tests build such a problem themselves rather than depending on the registry. The two
+1-D obstacle toys that used to provide them were removed along with the other synthetic
+and 1-D sources.
+
+**Every source runs a train/test phase.** `fem_lambda` and
 `physics` use the split their own archive ships; the rest get a deterministic stride, so
 train and test span the same parameter range rather than the stride being a held-out
 tail. Each cell records `n_train` and `n_test` in `grid.csv`, and `manifest.json` states

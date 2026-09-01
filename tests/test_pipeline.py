@@ -21,6 +21,7 @@ from bench import _paths
 from bench import datasets as ds_mod
 from bench.adapters import METHODS
 from bench.types import Dataset
+from _fixtures import make_solvable_obstacle
 
 
 def test_subsample_carries_the_field_geometry_through():
@@ -37,7 +38,7 @@ def test_subsample_carries_the_field_geometry_through():
     """
     from bench.runner import _subsample
 
-    for key in ("fem_lambda", "fem_lambda_pressure", "physics"):
+    for key in ("fem_lambda", "physics"):
         full = ds_mod.load(key)
         sub = _subsample(full, 20)
         assert sub.n_snapshots == 20, key
@@ -51,12 +52,17 @@ def test_subsample_carries_the_field_geometry_through():
 def test_subsample_preserves_split_and_callable():
     """``_subsample`` rebuilds a Dataset through asdict, which drops callables.
 
-    ``B_of_mu`` has to be re-attached and re-indexed onto the retained columns, or the
-    inf-sup metrics would silently read the wrong parameter.
+    ``B_of_mu``, ``rhs_of_mu`` and ``gap_of_mu`` all have to be re-attached and
+    re-indexed onto the retained columns, or the inf-sup and solved-error metrics would
+    silently read the wrong parameter.
+
+    Built here rather than loaded: no dataset in the registry carries an operator any
+    more, so a loaded one could not exercise the callable re-attachment at all -- the
+    assertions would pass vacuously on ``None``.
     """
     from bench.runner import _subsample
 
-    ds = ds_mod.load("toy_bee20")
+    ds = make_solvable_obstacle(n=20)
     small = _subsample(ds, 12)
     assert small.n_snapshots <= 12
     assert small.supports_infsup, "B_of_mu was lost through the rebuild"
@@ -67,9 +73,15 @@ def test_subsample_preserves_split_and_callable():
         assert small.train_idx.max() < small.n_snapshots
     if small.test_idx is not None:
         assert small.test_idx.max() < small.n_snapshots
-    # The retained parameters must be the ones B_of_mu now indexes.
+    # The retained parameters must be the ones the callables now index.
     assert small.B_of_mu is not None and ds.B_of_mu is not None
     assert small.B_of_mu(0).shape == ds.B_of_mu(0).shape
+    assert small.supports_online, "rhs_of_mu / gap_of_mu were lost through the rebuild"
+    kept = np.linspace(0, ds.n_snapshots - 1, 12).astype(int)
+    kept = np.unique(kept)
+    # Re-indexed, not merely present: entry j must be the original at kept[j].
+    for j in range(min(4, small.n_snapshots)):
+        assert np.allclose(small.rhs_of_mu(j), ds.rhs_of_mu(int(kept[j]))), j
 
 
 def test_runner_records_skips_rather_than_dropping(bumps):
@@ -182,12 +194,12 @@ def test_reconstruction_figures_render(tmp_path):
 
     methods = ["cpg_ndee22", "adg"]
     rc = reconstruction.main([
-        "--datasets", "toy_bee20", "--methods", *methods, "pod_control", "orthant",
+        "--datasets", "fem_lambda", "--methods", *methods, "pod_control", "orthant",
         "--R", "4", "--split", "--out", str(tmp_path),
     ])
     assert rc == 0
 
-    root = tmp_path / "toy_bee20" / "reconstruction"
+    root = tmp_path / "Half-disks_of_Hertz" / "reconstruction"
     assert (root / "all_methods.png").stat().st_size > 5000
     # One directory per method, each holding best.png and worst.png separately.
     assert sorted(p.name for p in root.iterdir() if p.is_dir()) == sorted(methods)

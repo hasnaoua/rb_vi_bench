@@ -225,7 +225,7 @@ def test_adg_k0_starts_from_the_empty_cone_at_the_largest_norm_snapshot():
     The norm is taken on the RAW snapshots even though the variant is normalized: on the
     normalized set every norm is 1 and the argmax would be settled by storage order.
     """
-    for key in ("fem_lambda", "gaussian_synth"):
+    for key in ("fem_lambda", "physics"):
         ds = ds_mod.load(key)
         first = METHODS["adg_k0"].fit(ds, R=1)
         assert first.R == 1, key
@@ -282,7 +282,7 @@ def test_adg_k0_differs_from_adg_only_in_the_first_generator(bumps):
     appearing late would mean something beyond the first step differs, and the figure
     comparing them would not measure what it claims.
     """
-    for ds in (bumps, ds_mod.load("fem_lambda"), ds_mod.load("hertz_2d")):
+    for ds in (bumps, ds_mod.load("fem_lambda")):
         cap = min(10, ds.train().shape[1])
         agreed_at = None
         for R in range(2, cap + 1):
@@ -305,7 +305,7 @@ def test_adg_k0_is_nested_and_defined_where_the_pair_start_is_not():
     cardinality sweep re-fits at every R, and is one trajectory only if a shorter run is
     a prefix of a longer one.
     """
-    ds = ds_mod.load("gaussian_synth")
+    ds = ds_mod.load("fem_lambda")
     full = METHODS["adg_k0"].fit(ds, R=10).generators
     for k in range(1, full.shape[1] + 1):
         part = METHODS["adg_k0"].fit(ds, R=k).generators
@@ -766,8 +766,7 @@ def test_momentum_and_adg_coincide_at_matched_cardinality(bumps):
                 assert np.isclose(row_a[k], row_b[k], equal_nan=True), (R, k)
 
 
-@pytest.mark.parametrize("key", ["toy_bee20", "obstacle_ndee22", "fem_lambda",
-                                 "gaussian_synth", "hertz_2d"])
+@pytest.mark.parametrize("key", ["fem_lambda"])
 def test_refitting_per_R_equals_one_greedy_run_truncated(key):
     """The cardinality sweep must simulate ONE greedy observed at each iteration.
 
@@ -810,15 +809,16 @@ def test_adg_has_no_R1_state_and_refuses_to_invent_one():
     AngularDefectGreedy initializes from the pair of snapshots at the largest mutual
     angle, so its cardinalities run 2, 3, 4, ... The upstream fixed-component helper
     answers R=1 anyway, through a separate `components == 1` branch returning the
-    largest-norm snapshot -- a different selection rule. On gaussian_synth and
-    membrane_2d that snapshot is not in the initialization pair, so the R=1 point was not
-    the first step of the curve drawn beside it; on the other datasets it coincides only
-    because the max-norm snapshot happens to fall in the pair, which is why the
-    discrepancy survived unnoticed.
+    largest-norm snapshot -- a different selection rule. On membrane_2d that snapshot is
+    not in the initialization pair, so the R=1 point was not the first step of the curve
+    drawn beside it; on the other shipped datasets it coincides only because the max-norm
+    snapshot happens to fall in the pair, which is why the discrepancy survived unnoticed.
+    membrane_2d is therefore the one that can still witness it.
 
     The adapter refuses R=1 rather than reporting a point from a different rule.
     """
-    ds = ds_mod.load("gaussian_synth")
+    pytest.importorskip("cvxopt", reason="membrane_2d needs greedy_algos[qp]")
+    ds = ds_mod.load("membrane_2d")
     for method in ("adg", "adg_momentum", "adg_raw"):
         with pytest.raises(ValueError, match="not a state on its trajectory"):
             METHODS[method].fit(ds, R=1)

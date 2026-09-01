@@ -26,7 +26,7 @@ from bench import datasets as ds_mod
 from bench import metrics
 from bench.adapters import METHODS
 from bench.types import BasisResult, Dataset
-from _fixtures import basis_of
+from _fixtures import basis_of, make_solvable_obstacle
 
 
 def test_selection_based_methods_stay_inside_the_snapshot_cone(bumps):
@@ -50,15 +50,15 @@ def test_mcpg_can_leave_the_snapshot_cone_but_never_W_plus():
     stronger than what actually holds.
 
     It is data-dependent, not universal: on the synthetic bump fixture every generator
-    stays inside, while on toy_bee20 a quarter of them leave and on fem_lambda most do.
-    The test uses toy_bee20 for that reason, and cross-checks against LP feasibility
+    stays inside, while on fem_lambda most of them leave. The test uses fem_lambda for
+    that reason, and cross-checks against LP feasibility
     rather than trusting the NNLS residual alone.
     """
     from scipy.optimize import linprog
 
     from bench.metrics import cone_geometry
 
-    ds = ds_mod.load("toy_bee20")
+    ds = ds_mod.load("fem_lambda")
     r = METHODS["mcpg_ndee22"].fit(ds, R=8)
     G, T = r.generators, ds.train()
     stats = cone_geometry.reach_outside(ds, G)
@@ -80,7 +80,7 @@ def test_selection_methods_never_leave_on_any_fast_dataset():
     """The construction guarantee, checked across datasets rather than on one fixture."""
     from bench.metrics import cone_geometry
 
-    for key in ("toy_bee20", "fem_lambda", "gaussian_synth"):
+    for key in ds_mod.FAST:
         ds = ds_mod.load(key)
         for method in ("cpg_bee20", "adg"):
             stats = cone_geometry.reach_outside(
@@ -98,7 +98,7 @@ def test_excess_is_zero_exactly_when_generators_are_snapshots(bumps):
     """
     from bench.metrics import cone_geometry
 
-    ds = ds_mod.load("toy_bee20")
+    ds = ds_mod.load("fem_lambda")
     for key in ("cpg_bee20", "adg"):
         e = cone_geometry.excess(ds, METHODS[key].fit(ds, R=8).generators, n_samples=24)
         assert e["excess_mean_err"] == pytest.approx(0.0, abs=1e-9), key
@@ -116,7 +116,7 @@ def test_cone_hausdorff_is_two_sided(bumps):
     """
     from bench.metrics import cone_geometry
 
-    ds = ds_mod.load("toy_bee20")
+    ds = ds_mod.load("fem_lambda")
     rows = {}
     for key in ("cpg_bee20", "mcpg_ndee22"):
         r = METHODS[key].fit(ds, R=8)
@@ -425,17 +425,21 @@ def test_conditioning_axis_is_bounded_at_numerical_singularity():
 def test_general_solve_matches_the_reference_when_B_is_identity():
     """The generalized solve must BE rb_online.solve_reduced wherever that one applies.
 
-    solve_reduced hardcodes B_hat = Xi.T @ V, i.e. K = I. That is right for toy_bee20 and
-    unusable for obstacle_ndee22, where the multiplier lives on 40 collocation points and
-    the displacement on ~200 nodes -- Xi.T @ V does not even have compatible shapes. So a
+    solve_reduced hardcodes B_hat = Xi.T @ V, i.e. K = I. That is right when the
+    constraint is u <= g directly, and unusable when the multiplier and the displacement
+    live on different meshes -- Xi.T @ V does not even have compatible shapes there. So a
     generalized version is necessary, and the risk it introduces is drift from the
-    reference. This pins them together on the dataset where both can run.
+    reference. This pins them together on a problem where both can run.
+
+    Built here rather than loaded: the registry now ships only cone datasets, none of
+    which carries an operator, and tying this check to a dataset is what would let it
+    lapse silently the next time the registry changes.
     """
     from rb_online import solve_reduced
 
     from bench.metrics.online import primal_basis, solve_reduced_general
 
-    ds = ds_mod.load("toy_bee20")
+    ds = make_solvable_obstacle()
     assert ds.A is not None and ds.B_of_mu is not None
     assert ds.rhs_of_mu is not None and ds.gap_of_mu is not None
     V = primal_basis(ds)
@@ -459,14 +463,13 @@ def test_online_metric_is_reported_only_where_the_problem_is_available():
     """
     from bench import metrics
 
-    for key in ("toy_bee20", "obstacle_ndee22"):
-        ds = ds_mod.load(key)
-        assert ds.supports_online, key
+    for ds in (make_solvable_obstacle(),):
+        assert ds.supports_online, ds.name
         row = metrics.online.evaluate(ds, METHODS["cpg_bee20"].fit(ds, R=5))
         assert row["online_primal_mean_rel"] > 0.0
         assert row["online_dual_mean_rel"] > 0.0
 
-    for key in ("gaussian_synth", "fem_lambda", "hertz_2d"):
+    for key in ("fem_lambda", "physics"):
         ds = ds_mod.load(key)
         assert not ds.supports_online, key
         assert metrics.online.evaluate(ds, METHODS["cpg_bee20"].fit(ds, R=5)) == {}
@@ -481,7 +484,7 @@ def test_solved_error_is_not_the_projection_error():
     """
     from bench import metrics
 
-    ds = ds_mod.load("toy_bee20")
+    ds = make_solvable_obstacle()
     for R in (4, 6, 8):
         res = METHODS["cpg_bee20"].fit(ds, R=R)
         proj = metrics.precision.evaluate(ds, res)["test_max_rel_err"]
@@ -500,8 +503,7 @@ def test_full_cone_reference_is_not_advertised_as_a_lower_bound():
     from bench import metrics
 
     below = total = 0
-    for key in ("toy_bee20", "obstacle_ndee22"):
-        ds = ds_mod.load(key)
+    for ds in (make_solvable_obstacle(), make_solvable_obstacle(dim=30, n=14, seed=3)):
         for R in (7, 9, 11):
             for m in ("cpg_bee20", "mcpg_ndee22", "nmf_s0"):
                 row = metrics.online.evaluate(ds, METHODS[m].fit(ds, R=R))

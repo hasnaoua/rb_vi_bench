@@ -101,15 +101,16 @@ def test_physics_reshape_matches_the_repository_convention():
 def test_field_datasets_declare_their_geometry():
     """A contact set that tiles a surface must never fall back to an index plot."""
     pytest.importorskip("cvxopt", reason="membrane_2d needs greedy_algos[qp]")
-    for key, kind in (("physics", "grid"), ("membrane_2d", "scatter"), ("hertz_2d", "line")):
+    for key, kind in (("physics", "grid"), ("membrane_2d", "scatter"),
+                      ("fem_lambda", "mirrored_line")):
         ds = ds_mod.load(key)
         assert ds.geometry is not None, key
         assert ds.geometry.kind == kind, (key, ds.geometry.kind)
-    # hertz_2d is genuinely 1-D but along an arc: it carries a physical abscissa.
-    hz = ds_mod.load("hertz_2d")
-    assert hz.geometry is not None
-    assert hz.geometry.coords is not None
-    assert len(hz.geometry.coords) == hz.dim
+    # The half-disk is genuinely 1-D but symmetric about its plane: it carries a physical
+    # abscissa spanning [-1, 1], not a node index.
+    hd = ds_mod.load("fem_lambda")
+    assert hd.geometry is not None and hd.geometry.coords is not None
+    assert len(hd.geometry.coords) == 2 * hd.dim - 1
 
 
 def test_physics_uses_the_shipped_train_test_split():
@@ -229,45 +230,36 @@ def test_physics_archive_split_files_agree_with_the_full_matrix(monkeypatch):
         ds_mod._load_cladding_split()
 
 
-def test_fem_lambda_pressure_corrects_only_the_symmetry_node():
-    """The pressure view doubles node 0 and touches nothing else.
-
-    Under lambda_i = integral p phi_i ~ p(x_i) h_i with uniform spacing, the tributary
-    length is h everywhere except the symmetry-axis node, whose hat is truncated to h/2.
-    So the conversion is exactly a factor 2 on row 0, up to a global constant that
-    span_+ is invariant to.
-    """
-    force = ds_mod.load("fem_lambda")
-    press = ds_mod.load("fem_lambda_pressure")
-
-    assert press.snapshots.shape == force.snapshots.shape
-    assert np.allclose(press.snapshots[1:], force.snapshots[1:]), "non-symmetry nodes moved"
-    assert np.allclose(press.snapshots[0], 2.0 * force.snapshots[0])
-    # The split must be the paper's, same as the uncorrected view.
-    assert press.train_idx is not None and force.train_idx is not None
-    assert press.test_idx is not None and force.test_idx is not None
-    assert np.array_equal(press.train_idx, force.train_idx)
-    assert np.array_equal(press.test_idx, force.test_idx)
-    # Loading one must not mutate the other -- both are lru_cached.
-    assert not np.allclose(force.snapshots[0], press.snapshots[0])
-
-
 def test_coordinate_rescaling_can_change_the_reduction():
     """Doubling one coordinate is not a no-op for a cone method.
 
-    The cone algorithms are invariant to rescaling each *snapshot* (span_+ is), but not
-    to rescaling a *coordinate*. If this ever came out invariant for every method, the
-    pressure dataset would be redundant and should be dropped.
+    Rescaling a *coordinate* is a different operation from rescaling a *snapshot*, and
+    the methods are sensitive to it. (They are sensitive to snapshot scaling too, which
+    is easy to get backwards: span_+{c g} = span_+{g} makes the resulting CONE invariant,
+    but the greedy SELECTION is an argmax over residual magnitudes, so scaling a column
+    changes which snapshot wins. Only the cone is invariant, never the selection.)
+
+    The rescaled view is built in the test rather than loaded. It used to be a shipped
+    dataset -- the half-disk in pressure rather than force variables, which differ by the
+    tributary length of the symmetry node, so exactly one coordinate is doubled. That
+    dataset is gone, but the property is a statement about the METHODS and does not need
+    it: doubling row 0 here reproduces the same transformation.
     """
+    import dataclasses
+
     force = ds_mod.load("fem_lambda")
-    press = ds_mod.load("fem_lambda_pressure")
+    S = force.snapshots.copy()
+    S[0, :] *= 2.0                       # one coordinate, as the pressure view did
+    rescaled = dataclasses.replace(force, name="fem_lambda[coord0 x2]", snapshots=S,
+                                   geometry=None)
+
     differed = []
     for key in ("cpg_bee20", "mcpg_ndee22", "adg"):
         a = METHODS[key].fit(force, delta=0.02)
-        b = METHODS[key].fit(press, delta=0.02)
+        b = METHODS[key].fit(rescaled, delta=0.02)
         if a.selected_indices != b.selected_indices:
             differed.append(key)
-    assert differed, "no method saw the correction; the pressure view would be redundant"
+    assert differed, "no method saw a coordinate rescaling; that would be a bug"
 
 
 @pytest.mark.parametrize("key", ds_mod.HEAVY)
@@ -308,7 +300,6 @@ def test_datasets_are_named_for_the_problem_they_solve():
 
     expected = {
         "fem_lambda": "Half-disks of Hertz",
-        "fem_lambda_pressure": "Half-disks of Hertz (pressure)",
         "physics": "3D Pellet-Cladding",
     }
     for key, name in expected.items():

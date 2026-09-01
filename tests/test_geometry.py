@@ -29,7 +29,7 @@ def test_half_disk_is_drawn_as_the_full_symmetric_contact_line():
     """
     from bench import geometry as g
 
-    for key in ("fem_lambda", "fem_lambda_pressure"):
+    for key in ("fem_lambda",):
         d = ds_mod.load(key)
         geom = d.geometry
         assert geom is not None and geom.coords is not None, key
@@ -51,35 +51,6 @@ def test_half_disk_is_drawn_as_the_full_symmetric_contact_line():
             # Uncorrected, the centre node carries half its tributary weight, so it sits
             # at roughly half the peak. That is the half-support effect, not a defect.
             assert 0.4 * full.max() < centre < 0.6 * full.max()
-
-
-def test_pressure_correction_lifts_the_centre_onto_the_peak():
-    """The half-support correction is what makes the mirrored profile peak at abscissa 0.
-
-    Measured over all 50 snapshots, centre value divided by the profile peak:
-
-        uncorrected  0.5034  (0.4668 - 0.5487)   -- exactly the half-support factor
-        corrected    0.9885  (0.9336 - 1.0000)
-
-    The corrected centre is *not* always the strict argmax (26 of 50) -- node-level noise
-    of a few percent means node 1 can edge above node 0 -- so this asserts the ratio,
-    which is the robust statement, rather than the argmax, which is not.
-    """
-    from bench import geometry as g
-
-    raw = ds_mod.load("fem_lambda")
-    press = ds_mod.load("fem_lambda_pressure")
-    c = raw.dim - 1                           # index of node 0 in the mirrored array
-
-    def ratios(d):
-        return np.array([g.mirror_half_profile(d.snapshots[:, k])[c]
-                         / g.mirror_half_profile(d.snapshots[:, k]).max()
-                         for k in range(d.n_snapshots)])
-
-    r_raw, r_press = ratios(raw), ratios(press)
-    assert 0.45 < r_raw.mean() < 0.55, r_raw.mean()
-    assert r_press.mean() > 0.95, r_press.mean()
-    assert r_press.min() > 0.9, "corrected centre should never fall far below the peak"
 
 
 def test_axial_profile_matches_the_publication_reduction():
