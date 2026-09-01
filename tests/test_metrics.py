@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from typing import cast
 
 import numpy as np
 import pytest
@@ -24,7 +25,7 @@ from bench import _paths
 from bench import datasets as ds_mod
 from bench import metrics
 from bench.adapters import METHODS
-from bench.types import Dataset
+from bench.types import BasisResult, Dataset
 from _fixtures import basis_of
 
 
@@ -153,7 +154,9 @@ def test_cone_geometry_skips_pathologically_large_cones(bumps):
         R = cone_geometry.MAX_R_FOR_SAMPLING + 1
         generators = np.eye(3)
 
-    skipped = cone_geometry.evaluate(bumps, _Fake(), n_samples=8)
+    # A deliberate duck-typed stand-in: ``evaluate`` reads only ``R`` and
+    # ``generators``, and the point is to trip the guard without building a real cone.
+    skipped = cone_geometry.evaluate(bumps, cast(BasisResult, _Fake()), n_samples=8)
     assert skipped == {"cone_geometry_skipped_R": float(_Fake.R)}
     assert "cover_mean_err" not in skipped, "a skip must not look like zero error"
 
@@ -433,6 +436,8 @@ def test_general_solve_matches_the_reference_when_B_is_identity():
     from bench.metrics.online import primal_basis, solve_reduced_general
 
     ds = ds_mod.load("toy_bee20")
+    assert ds.A is not None and ds.B_of_mu is not None
+    assert ds.rhs_of_mu is not None and ds.gap_of_mu is not None
     V = primal_basis(ds)
     Xi = METHODS["cpg_bee20"].fit(ds, R=6).generators
     B = ds.B_of_mu(0)

@@ -237,8 +237,8 @@ class ObstacleHF:
 
 def training_set(n_r=5, n_c=5, r_range=(0.10, 0.22), c_range=(0.40, 0.60)):
     """Tensor-product training set, in the style of D_train in §5.1."""
-    rs = np.linspace(*r_range, n_r)
-    cs = np.linspace(*c_range, n_c)
+    rs = np.linspace(r_range[0], r_range[1], n_r)
+    cs = np.linspace(c_range[0], c_range[1], n_c)
     return np.array([[r, c] for r in rs for c in cs])
 
 
@@ -246,6 +246,6 @@ def validation_set(n=32, r_range=(0.10, 0.22), c_range=(0.40, 0.60), seed=1):
     """Random validation set, as D_valid in §5.1 ("chosen ... randomly")."""
     rng = np.random.default_rng(seed)
     return np.column_stack([
-        rng.uniform(*r_range, n),
-        rng.uniform(*c_range, n),
+        rng.uniform(r_range[0], r_range[1], n),
+        rng.uniform(c_range[0], c_range[1], n),
     ])

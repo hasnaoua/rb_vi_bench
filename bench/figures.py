@@ -490,6 +490,94 @@ def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
     return path
 
 
+#: The ADG initialization ablation: identical algorithm, different first step.
+#:
+#: Stock ``adg`` opens with the PAIR of snapshots at the largest mutual angle. ``adg_k0``
+#: opens from the empty cone, as [BEE20] Alg. 2 line 2 and [NDEE22] Alg. 2 line 3 both
+#: do, which collapses the first selection to [BEE20] Eq. (56). Everything after that --
+#: angular-defect argmax, batch admission, normalization, stopping -- is shared, so any
+#: separation between the curves is the initialization and nothing else.
+#:
+#: They get their own figure rather than another pair of lines on the comparison axes:
+#: on most datasets the two coincide exactly, and two overlaid identical curves among six
+#: others reads as a rendering artefact rather than as the result it is.
+ADG_INIT_METHODS: tuple[str, ...] = ("adg", "adg_k0")
+
+
+def figure_adg_init(dataset: str, series, out_dir: Path) -> Path | None:
+    """ADG's two initializations, side by side on every metric.
+
+    The comparison is controlled: one variant differs from the other only in how the
+    first generator is chosen, so a gap between the curves isolates that choice. Reading
+    it, two things are worth knowing in advance.
+
+    **Coinciding curves are the common outcome, not a bug.** Whenever the largest-norm
+    snapshot already lies in the largest-mutual-angle pair, the two cones agree from R=2
+    onward and the lines lie exactly on top of each other. The dashed ``adg_k0`` style is
+    chosen so that this is visible as agreement rather than as a missing series.
+
+    **Only ``adg_k0`` is defined at R=1.** Starting from a pair means stock ADG's
+    trajectory begins at two generators, so its curve starts at R=2 while the ablation's
+    starts at R=1. The offset is the point, not a gap in the data.
+    """
+    sub = {m: p for m, p in series.items() if m in ADG_INIT_METHODS and p}
+    if len(sub) < 2:
+        return None
+
+    err_col, err_title = error_column(series)
+    panels = list(PANELS + CONE_PANELS)
+    nrows = -(-len(panels) // 2)
+    fig, axes = plt.subplots(nrows, 2, figsize=(11.5, 3.75 * nrows))
+    drawn = 0
+    for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), panels):
+        if column == "test_max_rel_err":
+            column, title = err_col, err_title
+        drawn += _panel(ax, sub, column, ylabel, yscale, title, only=set(sub))
+    for ax in axes.ravel()[len(panels):]:
+        ax.set_axis_off()
+    if not drawn:
+        discard(fig)
+        return None
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=2, fontsize=9, frameon=False,
+               bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle(
+        f"{dataset} — ADG initialization: largest-angle pair vs $K_0=\\{{0\\}}$\n"
+        "identical angular-defect rule, batch admission, normalization and stopping; "
+        "only the first generator differs",
+        fontsize=11)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+    path = layout.ensure(layout.dataset_dir(out_dir, dataset)) / "adg_initialization.png"
+    save(fig, path)
+    return path
+
+
+def figures_adg_init_split(dataset: str, series, out_dir: Path) -> list[Path]:
+    """One standalone PNG per metric for the initialization ablation."""
+    sub = {m: p for m, p in series.items() if m in ADG_INIT_METHODS and p}
+    if len(sub) < 2:
+        return []
+    err_col, err_title = error_column(series)
+    out = layout.ensure(layout.dataset_dir(out_dir, dataset) / "adg_init")
+    written: list[Path] = []
+    for column, ylabel, yscale, title in PANELS + CONE_PANELS:
+        name = SPLIT_NAMES.get(column, column)
+        if column == "test_max_rel_err":
+            column, title = err_col, err_title
+        fig, ax = plt.subplots(figsize=(7.0, 4.6))
+        if not _panel(ax, sub, column, ylabel, yscale, title, only=set(sub)):
+            discard(fig)
+            continue
+        ax.legend(fontsize=8, frameon=False)
+        ax.set_title(f"{dataset} — {title}", fontsize=10)
+        fig.tight_layout()
+        path = out / f"{name}.png"
+        save(fig, path)
+        written.append(path)
+    return written
+
+
 def figure_reference(dataset: str, series, out_dir: Path) -> Path | None:
     """The reference methods on their own axes -- every metric, one figure.
 
@@ -605,6 +693,7 @@ def main(argv=None) -> int:
         if not args.no_panel:
             written.append(figure_for_dataset(dataset, all_series[dataset], out_dir))
             for extra in (figure_cone_geometry(dataset, all_series[dataset], out_dir),
+                          figure_adg_init(dataset, all_series[dataset], out_dir),
                           figure_train_vs_test(dataset, all_series[dataset], out_dir),
                           figure_reference(dataset, all_series[dataset], out_dir)):
                 if extra:
@@ -612,6 +701,7 @@ def main(argv=None) -> int:
         if args.separate:
             written.extend(figures_split(dataset, all_series[dataset], out_dir))
             written.extend(figures_reference_split(dataset, all_series[dataset], out_dir))
+            written.extend(figures_adg_init_split(dataset, all_series[dataset], out_dir))
     if not args.no_panel:
         written.append(figure_precision_overview(all_series, out_dir))
 

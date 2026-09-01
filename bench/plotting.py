@@ -36,6 +36,11 @@ STYLE: dict[str, dict] = {
     "adg_raw":     dict(color="#f0b27a", marker="d", ls=":",  label="ADG (un-normalized)"),
     "adg_momentum": dict(color="#a04000", marker="*", ls="-.",
                          label="ADG (momentum stop)"),
+    # The initialization ablation. Same ADG hue, dashed: on most datasets it lies exactly
+    # on top of `adg`, and a distinct dash pattern makes that read as agreement rather
+    # than as a missing series.
+    "adg_k0":      dict(color="#7d3c98", marker="s", ls="--",
+                        label=r"ADG (CPG init, $K_0=\{0\}$)"),
     "nmf_s0":      dict(color="#c0392b", marker="v", ls="-",  label="NMF (seed 0)"),
     "nmf_s1":      dict(color="#d98880", marker="v", ls=":",  label="NMF (seed 1)"),
     "nmf_s2":      dict(color="#e6b0aa", marker="v", ls=":",  label="NMF (seed 2)"),

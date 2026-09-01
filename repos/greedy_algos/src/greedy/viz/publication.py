@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MaxNLocator
 
@@ -273,7 +275,7 @@ def mesh_segments(
 
 
 def annotate_span(
-    ax: plt.Axes,
+    ax: Axes,
     z: np.ndarray,
     mask: np.ndarray,
     *,
@@ -309,7 +311,7 @@ def annotate_span(
     )
 
 
-def plot_contact_schematic(ax: plt.Axes, z: np.ndarray, active: np.ndarray) -> None:
+def plot_contact_schematic(ax: Axes, z: np.ndarray, active: np.ndarray) -> None:
     x_min, x_max = 0.0, 1.0
     contact_x = 0.32
     segments = mesh_segments(x_min=x_min, x_max=x_max, z_min=0.0, z_max=HEIGHT_MM)
@@ -371,7 +373,7 @@ def plot_contact_schematic(ax: plt.Axes, z: np.ndarray, active: np.ndarray) -> N
     ax.axis("off")
 
 
-def add_active_band(ax: plt.Axes, z: np.ndarray, active: np.ndarray) -> None:
+def add_active_band(ax: Axes, z: np.ndarray, active: np.ndarray) -> None:
     ax.fill_betweenx(
         z,
         0.0,
@@ -440,12 +442,12 @@ def method_absolute_errors(
 def best_method_label(relative_errors: dict[str, float]) -> str:
     if not relative_errors:
         return "n/a"
-    key = min(relative_errors, key=relative_errors.get)
+    key = min(relative_errors, key=lambda name: relative_errors[name])
     return METHODS[key].label
 
 
 def plot_overlay_lines(
-    ax: plt.Axes,
+    ax: Axes,
     *,
     z: np.ndarray,
     hf_profile: np.ndarray,
@@ -517,7 +519,7 @@ def plot_overlay_lines(
 
 
 def plot_profile_panel(
-    ax: plt.Axes,
+    ax: Axes,
     z: np.ndarray,
     profile: np.ndarray,
     *,
@@ -541,7 +543,7 @@ def plot_profile_panel(
     line_values = 0.5 * (np.abs(profile[:-1]) + np.abs(profile[1:]))
     if line_color is None:
         collection = LineCollection(
-            segments,
+            segments,  # type: ignore[arg-type]
             cmap=color_map,
             norm=color_norm,
             linewidths=line_width,
@@ -562,7 +564,7 @@ def plot_profile_panel(
         )
     else:
         collection = LineCollection(
-            segments,
+            segments,  # type: ignore[arg-type]
             colors=line_color,
             linewidths=line_width,
             capstyle="round",
@@ -606,7 +608,7 @@ def plot_profile_panel(
     return collection
 
 
-def save_figure(fig: plt.Figure, output_base: Path, dpi: int) -> list[Path]:
+def save_figure(fig: Figure, output_base: Path, dpi: int) -> list[Path]:
     output_base.parent.mkdir(parents=True, exist_ok=True)
     paths = [output_base.with_suffix(".png"), output_base.with_suffix(".pdf")]
     fig.savefig(paths[0], dpi=dpi)

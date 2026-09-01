@@ -511,7 +511,7 @@ def plot_matched_r(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--case", choices=sorted(CASES), required=True)
     parser.add_argument("--data-dir", type=Path, default=Path("data/contact_forces"))
     parser.add_argument("--output-dir", type=Path, default=None)

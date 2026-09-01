@@ -32,9 +32,13 @@ necessary when reading its tolerance "against the snapshot scale".
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
+
+if TYPE_CHECKING:  # annotations are strings (`from __future__ import annotations`),
+    # so this costs nothing at runtime and cannot reintroduce an import cycle.
+    from bench.geometry import FieldGeometry
 
 
 #: Snapshots whose norm falls below this fraction of the largest are dropped at
@@ -133,7 +137,7 @@ class Dataset:
     #: means a 1-D contact set plotted against its component index -- which is wrong for
     #: any dataset whose contact nodes tile a surface, so it must be set wherever the
     #: source knows its own geometry.
-    geometry: object | None = None
+    geometry: FieldGeometry | None = None
     #: How many numerically-zero snapshots were discarded at construction.
     n_dropped_zero: int = 0
 
@@ -153,7 +157,7 @@ class Dataset:
                 raise ValueError(f"{self.name}: every snapshot is numerically zero")
             # Index-valued fields must be remapped onto the surviving columns, not merely
             # filtered: a stale index would silently point at a different snapshot.
-            remap = {old: new for new, old in enumerate(np.flatnonzero(keep))}
+            remap = {int(old): new for new, old in enumerate(np.flatnonzero(keep))}
             for attr in ("train_idx", "test_idx"):
                 sel = getattr(self, attr)
                 if sel is not None:

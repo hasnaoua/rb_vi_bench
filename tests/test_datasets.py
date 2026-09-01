@@ -85,6 +85,7 @@ def test_physics_reshape_matches_the_repository_convention():
 
     ds = ds_mod.load("physics")
     geom = ds.geometry
+    assert geom is not None
     assert geom.kind == "grid" and geom.shape == (76, 101)
 
     v = ds.snapshots[:, 0]
@@ -106,6 +107,7 @@ def test_field_datasets_declare_their_geometry():
         assert ds.geometry.kind == kind, (key, ds.geometry.kind)
     # hertz_2d is genuinely 1-D but along an arc: it carries a physical abscissa.
     hz = ds_mod.load("hertz_2d")
+    assert hz.geometry is not None
     assert hz.geometry.coords is not None
     assert len(hz.geometry.coords) == hz.dim
 
@@ -121,10 +123,13 @@ def test_physics_uses_the_shipped_train_test_split():
     ds = ds_mod.load("physics")
 
     assert ds.has_split
+    test_cols = ds.test()
+    assert test_cols is not None
     assert ds.train().shape[1] == 47
-    assert ds.test().shape[1] == 47
-    assert ds.train().shape[1] + ds.test().shape[1] == ds.n_snapshots
+    assert test_cols.shape[1] == 47
+    assert ds.train().shape[1] + test_cols.shape[1] == ds.n_snapshots
 
+    assert ds.train_idx is not None and ds.test_idx is not None
     train, test = set(map(int, ds.train_idx)), set(map(int, ds.test_idx))
     assert not (train & test), "a snapshot must not be both fitted and scored"
     assert train | test == set(range(ds.n_snapshots)), "the split must cover every column"
@@ -132,6 +137,7 @@ def test_physics_uses_the_shipped_train_test_split():
     # The archive interleaves rather than holding out a tail, and it has to: the
     # parameter sweeps monotonically from no contact to full contact, so a contiguous
     # test block would be extrapolation. Both halves must span the same range.
+    assert ds.params is not None
     p_train = ds.params[ds.train_idx].ravel()
     p_test = ds.params[ds.test_idx].ravel()
     assert abs(p_train.min() - p_test.min()) < 0.02
@@ -189,6 +195,7 @@ def test_physics_parameters_come_from_the_archive_not_an_inferred_grid():
 
     # Five columns come off the low end, so the dataset starts inside the fine block.
     assert ds.n_snapshots == 94
+    assert ds.params is not None
     assert np.isclose(ds.params.ravel()[0], 0.185)
     assert np.isclose(ds.params.ravel()[-1], 1.00), "the sweep ends at 1.00, not 1.01"
 
@@ -237,6 +244,8 @@ def test_fem_lambda_pressure_corrects_only_the_symmetry_node():
     assert np.allclose(press.snapshots[1:], force.snapshots[1:]), "non-symmetry nodes moved"
     assert np.allclose(press.snapshots[0], 2.0 * force.snapshots[0])
     # The split must be the paper's, same as the uncorrected view.
+    assert press.train_idx is not None and force.train_idx is not None
+    assert press.test_idx is not None and force.test_idx is not None
     assert np.array_equal(press.train_idx, force.train_idx)
     assert np.array_equal(press.test_idx, force.test_idx)
     # Loading one must not mutate the other -- both are lru_cached.
@@ -285,7 +294,8 @@ def test_fast_datasets_load_and_are_valid(key):
     assert np.all(np.isfinite(ds.snapshots))
     assert ds.scale > 0.0
     if ds.supports_infsup:
-        assert ds.A is not None and ds.B_of_mu(0).ndim == 2
+        assert ds.A is not None and ds.B_of_mu is not None
+        assert ds.B_of_mu(0).ndim == 2
 
 
 def test_datasets_are_named_for_the_problem_they_solve():

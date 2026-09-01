@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 
 def gaussian_fct(x: np.ndarray, center: float, width: float = 0.08) -> np.ndarray:
@@ -30,7 +30,7 @@ def gaussian_basis(
     dim_basis: int = 1,
     width: float = 0.08,
     discretization_count: int = 500,
-    centers: Optional[List[float]] = None,
+    centers: Union[Sequence[float], np.ndarray, None] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate Gaussian basis functions over the interval [0, 1].

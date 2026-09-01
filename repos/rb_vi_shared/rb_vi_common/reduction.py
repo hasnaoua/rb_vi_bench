@@ -62,10 +62,13 @@ class Whitener:
     def B_hat(self, B):
         """M^-T B L^-1, the whitened constraint matrix."""
         # B L^-1: solve X L = B, i.e. L^T X^T = B^T.
-        X = solve_triangular(self.L, np.asarray(B, float).T, lower=False, trans="T").T
+        # scipy documents trans as 0/1/2 or "N"/"T"/"C"; only the int form survives
+        # pyright's inference of the unstubbed source, which reads the default 0.
+        X = solve_triangular(self.L, np.asarray(B, float).T, lower=False,
+                             trans="T").T  # type: ignore[arg-type]
         if self.M is None:
             return X
-        return solve_triangular(self.M, X, lower=False, trans="T")
+        return solve_triangular(self.M, X, lower=False, trans="T")  # type: ignore[arg-type]
 
 
 def pod(snapshots_tilde, delta):

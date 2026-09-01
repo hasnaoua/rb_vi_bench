@@ -40,7 +40,7 @@ import numpy as np
 from . import _paths, cli, datasets as ds_mod, metrics
 from .tabular import write_csv as _write_csv
 from .adapters import CROSS_FAMILY_PAIRS, DEFAULT_METHODS, METHODS
-from .types import Dataset
+from .types import BasisResult, Dataset
 
 
 # The tolerance grid has to span two orders of magnitude because the datasets differ
@@ -113,7 +113,7 @@ def run_cell(dataset: Dataset, method_key: str, *, delta=None, R=None,
         # Recorded alongside n_train, not derived from it: a reader has to be able to
         # tell "scored on 47 held-out snapshots" from "scored on the training set
         # because this source ships no split", and a blank n_test says which.
-        "n_test": dataset.test().shape[1] if dataset.has_split else "",
+        "n_test": _test.shape[1] if (_test := dataset.test()) is not None else "",
         "skip_reason": "",
     }
 
@@ -153,7 +153,7 @@ def run_cell(dataset: Dataset, method_key: str, *, delta=None, R=None,
 def run_agreement(dataset: Dataset, *, delta: float) -> list[dict]:
     """Cross-family comparisons at one tolerance."""
     rows = []
-    cache: dict[str, object] = {}
+    cache: dict[str, BasisResult] = {}
     for a_key, b_key in CROSS_FAMILY_PAIRS:
         row: dict[str, object] = {
             "dataset": dataset.name, "pair": f"{a_key} vs {b_key}",
@@ -202,15 +202,16 @@ def main(argv=None) -> int:
             grid_rows.append({"dataset": ds_key, "skip_reason":
                               f"dataset build failed: {type(exc).__name__}: {exc}"})
             continue
-        split = (f"n_test={dataset.test().shape[1]}" if dataset.has_split
+        test_cols = dataset.test()
+        split = (f"n_test={test_cols.shape[1]}" if test_cols is not None
                  else "no split (train-set errors only)")
         print(f"[{ds_key}] dim={dataset.dim} n_train={dataset.train().shape[1]} {split} "
               f"infsup={dataset.supports_infsup} ({time.perf_counter()-t0:.1f}s to build)",
               flush=True)
         splits[dataset.name] = {"dim": dataset.dim,
                                 "n_train": int(dataset.train().shape[1]),
-                                "n_test": (int(dataset.test().shape[1])
-                                           if dataset.has_split else None),
+                                "n_test": (int(test_cols.shape[1])
+                                           if test_cols is not None else None),
                                 "n_dropped_zero": int(dataset.n_dropped_zero)}
 
         for delta in args.deltas:

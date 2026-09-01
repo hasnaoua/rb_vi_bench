@@ -36,6 +36,7 @@ def test_mcpg_basis_is_nonnegative_and_converges():
     snapshots = _near_collinear_dataset()
     model = mCPG(snapshots=snapshots, epsilon=1e-6)
     model.compute_phases()
+    assert model.basis_matrix is not None
 
     assert model.basis_matrix is not None
     assert model.basis_matrix.shape[0] > 0
@@ -80,6 +81,7 @@ def test_mcpg_basis_nonnegative_when_shift_norms_are_tiny():
 
     model = mCPG(snapshots=snapshots, epsilon=1e-10)
     model.compute_phases()
+    assert model.basis_matrix is not None
 
     assert model.basis_matrix.shape[0] > 3, "cone should saturate past the 3 bases"
     assert min(model.shift_norm_history) < 1e-2, (
@@ -113,6 +115,7 @@ def test_mcpg_basis_nonnegative_with_constraint_transform():
         constraint_transform=np.linalg.inv(U),
     )
     model.compute_phases()
+    assert model.basis_matrix is not None
 
     physical = model.basis_matrix @ np.linalg.inv(U).T
     assert physical.min() >= -1e-12, (
@@ -126,8 +129,10 @@ def test_mcpg_matches_cpg_accuracy_with_better_conditioning():
 
     cpg = CPG(snapshots=snapshots, epsilon=epsilon)
     cpg.compute_phases()
+    assert cpg.basis_matrix is not None
     mcpg = mCPG(snapshots=snapshots, epsilon=epsilon)
     mcpg.compute_phases()
+    assert mcpg.basis_matrix is not None
 
     # Same tolerance should be reached with a comparable number of steps.
     assert abs(cpg.basis_matrix.shape[0] - mcpg.basis_matrix.shape[0]) <= 2

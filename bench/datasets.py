@@ -456,7 +456,7 @@ def _membrane_2d() -> Dataset:
         u, lam = hf.solve(mu)
         U.append(u)
         L.append(lam)
-    S = np.asarray(L, float).T
+    S: np.ndarray = np.asarray(L, float).T
     idx = np.arange(S.shape[1])
     test_idx = idx[::5]
     return Dataset(
@@ -493,7 +493,7 @@ def _hertz_2d() -> Dataset:
         lam, x, _gap = hf.solve(mu)
         arc_x = x
         L.append(lam)
-    S = np.asarray(L, float).T
+    S: np.ndarray = np.asarray(L, float).T
     idx = np.arange(S.shape[1])
     test_idx = idx[::4]
     return Dataset(

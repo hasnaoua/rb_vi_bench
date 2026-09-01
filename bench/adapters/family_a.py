@@ -27,7 +27,7 @@ import numpy as np
 
 from .. import _paths  # noqa: F401  -- sys.path side effect
 from ..instrument import count_solver_calls, summarize
-from ..types import BasisResult
+from ..types import BasisResult, Dataset
 
 from rb_vi_common.cone_greedy import cone_projected_greedy, cpg, mcpg
 
@@ -36,6 +36,18 @@ from rb_vi_common.cone_greedy import cone_projected_greedy, cpg, mcpg
 # stopping rule must not fire at all -- ``max_R`` is what stops the loop -- so the
 # tolerance is set below any achievable residual rather than to zero.
 _EXHAUSTIVE_TOL = 1e-14
+
+
+def _require_delta(delta: float | None) -> float:
+    """``delta`` is mandatory whenever ``R`` is not given -- say so once.
+
+    Every adapter takes exactly one of the two knobs, and the runner always supplies
+    one. Stated here rather than at six call sites, and as a named error rather than
+    the ``TypeError`` that ``float(None)`` would raise three frames deeper.
+    """
+    if delta is None:
+        raise ValueError("pass delta= when R= is not given")
+    return float(delta)
 
 
 def _run(fn, snapshots, tol, max_R, mass=None):
@@ -48,7 +60,8 @@ def _run(fn, snapshots, tol, max_R, mass=None):
     return result, time.perf_counter() - t0, summarize(counts)
 
 
-def fit_bee20_cpg(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_bee20_cpg(dataset: Dataset, *, delta: float | None = None,
+        R: int | None = None) -> BasisResult:
     """[BEE20] Algorithm 2, absolute tolerance Eq. (58).
 
     The benchmark's canonical knob is a *relative* tolerance, so ``delta`` is
@@ -65,7 +78,7 @@ def fit_bee20_cpg(dataset, *, delta=None, R=None) -> BasisResult:
     if R is not None:
         tol = _EXHAUSTIVE_TOL
     else:
-        tol = float(delta) * dataset.scale
+        tol = _require_delta(delta) * dataset.scale
     res, seconds, counts = _run(cone_projected_greedy, train, tol, R, mass=dataset.mass)
     # Residuals are absolute here; report them on the same relative footing as the
     # other methods so the error histories are comparable across families.
@@ -85,9 +98,10 @@ def fit_bee20_cpg(dataset, *, delta=None, R=None) -> BasisResult:
     )
 
 
-def fit_ndee22_cpg(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_ndee22_cpg(dataset: Dataset, *, delta: float | None = None,
+        R: int | None = None) -> BasisResult:
     """CPG as [NDEE22] Remark 4.3 describes it: normalized generators, Eq. (13)."""
-    tol = _EXHAUSTIVE_TOL if R is not None else float(delta)
+    tol = _EXHAUSTIVE_TOL if R is not None else _require_delta(delta)
     res, seconds, counts = _run(cpg, dataset.train(), tol, R)
     return BasisResult(
         method="cpg_ndee22",
@@ -104,14 +118,15 @@ def fit_ndee22_cpg(dataset, *, delta=None, R=None) -> BasisResult:
     )
 
 
-def fit_ndee22_mcpg(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_ndee22_mcpg(dataset: Dataset, *, delta: float | None = None,
+        R: int | None = None) -> BasisResult:
     """[NDEE22] Algorithm 2 -- mCPG.
 
     Line 9 solves ``Upsilon_r in K_{r-1} cap (theta_q - W^+)`` with SLSQP, which is
     [UNSPECIFIED] item 2 in [NDEE22]'s notes; it is the reason this method's
     ``minimize`` count is non-zero where CPG's is zero.
     """
-    tol = _EXHAUSTIVE_TOL if R is not None else float(delta)
+    tol = _EXHAUSTIVE_TOL if R is not None else _require_delta(delta)
     res, seconds, counts = _run(mcpg, dataset.train(), tol, R)
     return BasisResult(
         method="mcpg_ndee22",

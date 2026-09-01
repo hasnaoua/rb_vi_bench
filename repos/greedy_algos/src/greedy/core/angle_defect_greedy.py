@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import numpy as np
 
 from greedy.core.cone_greedy import ConeGreedy
@@ -49,8 +50,7 @@ class AngularDefectGreedy(ConeGreedy):
 
     "Standard ADG" is this algorithm with ``normalize_snapshots=True``; that
     flag is the only knob. Every round admits exactly the snapshots attaining
-    theta_max, so the Theorem 3.5 certificate always holds (see
-    ``verify_angular_defect_certificate``).
+    the largest angle.
     """
 
     _display_name = "Angular defect greedy"
@@ -439,10 +439,10 @@ class AngularDefectGreedy(ConeGreedy):
 
     def plot_convergence(
         self,
-        ax: plt.Axes | None = None,
+        ax: Axes | None = None,
         *,
         show_certificate: bool = False,
-    ) -> plt.Axes:
+    ) -> Axes:
         """The shared convergence plot, plus ADG's Theorem 3.5 bound."""
         ax = super().plot_convergence(ax)
         if show_certificate and self.certificate_history:

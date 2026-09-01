@@ -104,7 +104,7 @@ def main():
     print(f"  dim V_N = {Theta.shape[1]},  R = {cone.shape[1]},  "
           f"dim S_R = {S_on.shape[1]}   ([NDEE22] Eq. 17/20)")
     print("  PGA compression of S_R  ([NDEE22] Alg. 1, Eq. 27-28):")
-    enrichments = {"none (as [BEE20])": None}
+    enrichments: dict[str, np.ndarray | None] = {"none (as [BEE20])": None}
     for d in (0.9, 0.7, 0.5):
         S_red, info = pga_enrichment(A, cone, delta_pga=d, primal_basis=Theta)
         print(f"    delta_PGA = {d:.1f}  ->  dim S_R^red = {info['dim_S_red']:3d}"

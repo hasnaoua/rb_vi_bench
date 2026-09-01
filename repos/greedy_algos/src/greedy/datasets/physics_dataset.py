@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 import numpy as np
 
 
@@ -343,7 +344,7 @@ def plot_surface_snapshot_grid(
             image_values,
             origin="lower",
             aspect="auto",
-            extent=[0.0, HEIGHT_MM, 0.0, np.degrees(SECTOR_ANGLE_RAD)],
+            extent=(0.0, float(HEIGHT_MM), 0.0, float(np.degrees(SECTOR_ANGLE_RAD))),
             cmap="viridis",
             vmin=vmin,
             vmax=vmax,
@@ -378,7 +379,7 @@ def plot_surface_envelope(
         values,
         origin="lower",
         aspect="auto",
-        extent=[0.0, HEIGHT_MM, 0.0, np.degrees(SECTOR_ANGLE_RAD)],
+        extent=(0.0, float(HEIGHT_MM), 0.0, float(np.degrees(SECTOR_ANGLE_RAD))),
         cmap="viridis",
         vmin=vmin,
         vmax=vmax,
@@ -412,7 +413,7 @@ def plot_quarter_cylinder_snapshots(
         [_surface_log_values(reshape_contact_surface(snapshots[row], grid_shape)) for row in rows]
     )
     vmin, vmax = _robust_limits(transformed)
-    normaliser = plt.Normalize(vmin=vmin, vmax=vmax)
+    normaliser = Normalize(vmin=vmin, vmax=vmax)
     cmap = plt.get_cmap("viridis")
 
     ncols = min(3, rows.size)
@@ -496,7 +497,7 @@ def save_physics_dataset(
     dataset_path: Path = DEFAULT_DATASET,
 ) -> None:
     dataset_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(dataset_path, **dataset)
+    np.savez_compressed(dataset_path, **dataset)  # type: ignore[arg-type]
 
 
 def parse_args() -> argparse.Namespace:

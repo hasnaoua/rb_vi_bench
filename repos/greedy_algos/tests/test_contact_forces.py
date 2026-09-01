@@ -73,10 +73,12 @@ def test_mcpg_identity_constraint_transform_matches_default():
 
     default = mCPG(snapshots=snapshots, epsilon=1e-2)
     default.compute_phases()
+    assert default.basis_matrix is not None
     identity = mCPG(
         snapshots=snapshots, epsilon=1e-2, constraint_transform=np.eye(6)
     )
     identity.compute_phases()
+    assert identity.basis_matrix is not None
 
     assert default.selected_indices == identity.selected_indices
     np.testing.assert_allclose(default.basis_matrix, identity.basis_matrix, atol=1e-8)
@@ -102,6 +104,7 @@ def test_mcpg_in_w_keeps_the_shift_inside_the_physical_cone():
 
     model = mCPG(snapshots=transformed, epsilon=1e-3, constraint_transform=inverse)
     model.compute_phases()
+    assert model.basis_matrix is not None
 
     # Every generator, mapped back to physical coordinates, is a normalized
     # (theta - Upsilon) and so must be elementwise nonnegative.
@@ -118,6 +121,7 @@ def test_cpg_on_transformed_data_selects_by_w_norm():
 
     model = CPG(snapshots=snapshots @ upper.T, epsilon=0.5)
     model.compute_phases()
+    assert model.basis_matrix is not None
 
     # The first pick maximizes the distance to the zero cone, i.e. the W-norm.
     assert model.selected_indices[0] == int(np.argmax(w_norm(snapshots, gram)))
@@ -180,6 +184,7 @@ def test_row_wise_cases_are_loaded_without_a_spurious_transpose(case, filename):
     np.testing.assert_allclose(dataset.snapshots, raw["snapshots"], rtol=1e-12)
     np.testing.assert_allclose(dataset.parameters, raw["params"], rtol=1e-12)
     # Row p must be one lambda(mu_p) over the arc, so it lines up with abscissas.
+    assert dataset.coordinates is not None
     assert dataset.snapshots.shape[1] == dataset.coordinates.size
     # The rebuilt Gram is the arc mass of exactly those abscissas.
     from greedy.datasets.contact_forces import arc_mass_matrix
@@ -205,8 +210,10 @@ def test_mcpg_is_better_conditioned_at_matched_r_on_the_new_hertz_cases(case):
 
     cpg = CPG(snapshots=transformed[train], epsilon=1e-3)
     cpg.compute_phases()
+    assert cpg.basis_matrix is not None
     mcpg = mCPG(snapshots=transformed[train], epsilon=1e-3, constraint_transform=inverse)
     mcpg.compute_phases()
+    assert mcpg.basis_matrix is not None
 
     budget = min(cpg.basis_matrix.shape[0], mcpg.basis_matrix.shape[0])
     cpg_at = prefix_curve(cpg.basis_matrix[:budget], transformed, train, test)[-1]
@@ -229,6 +236,7 @@ def test_mcpg_generators_stay_in_the_physical_cone_on_the_new_hertz_cases(case):
         constraint_transform=inverse,
     )
     model.compute_phases()
+    assert model.basis_matrix is not None
 
     physical = la.solve_triangular(upper, model.basis_matrix.T, lower=False).T
     assert physical.min() > -1e-6
@@ -298,6 +306,7 @@ def test_pod_lower_bounds_the_cone_greedy_at_equal_R():
 
     model = CPG(snapshots=transformed, epsilon=5e-2)
     model.compute_phases()
+    assert model.basis_matrix is not None
     R = model.basis_matrix.shape[0]
 
     _, residuals = project_onto_cone(transformed, model.basis_matrix)
@@ -376,10 +385,12 @@ def test_mcpg_dominates_at_matched_cone_size_on_hertz():
 
     cpg = CPG(snapshots=transformed[train], epsilon=1e-2)
     cpg.compute_phases()
+    assert cpg.basis_matrix is not None
     mcpg = mCPG(
         snapshots=transformed[train], epsilon=1e-2, constraint_transform=inverse
     )
     mcpg.compute_phases()
+    assert mcpg.basis_matrix is not None
 
     budget = mcpg.basis_matrix.shape[0]
     cpg_at = prefix_curve(cpg.basis_matrix[:budget], transformed, train, test)[-1]

@@ -29,7 +29,7 @@ import numpy as np
 
 from .. import _paths  # noqa: F401  -- sys.path side effect
 from ..instrument import count_solver_calls, summarize
-from ..types import BasisResult
+from ..types import BasisResult, Dataset
 
 from greedy.core.angle_defect_greedy import AngularDefectGreedy
 from greedy.core.cpg import CPG
@@ -46,12 +46,19 @@ from greedy.pipelines.component_sweep import (
 _ZERO_TOL = {"cpg": 0.0, "mcpg": 1e-12, "adg": 1e-14}
 
 
+def _require_delta(delta: float | None) -> float:
+    """See ``family_a._require_delta`` -- ``delta`` is mandatory without ``R``."""
+    if delta is None:
+        raise ValueError("pass delta= when R= is not given")
+    return float(delta)
+
+
 def _fit_to_tolerance(cls, dataset, delta, **kwargs):
     """Run a ``ConeGreedy`` subclass to its stopping tolerance."""
     rows = np.ascontiguousarray(dataset.train().T)   # (dim, n) -> (n, dim)
     t0 = time.perf_counter()
     with count_solver_calls() as counts:
-        model = cls(snapshots=rows, epsilon=float(delta), **kwargs)
+        model = cls(snapshots=rows, epsilon=_require_delta(delta), **kwargs)
         model.compute_phases()
     seconds = time.perf_counter() - t0
     basis = model.basis_matrix
@@ -77,7 +84,8 @@ def _fit_to_cardinality(fitter, dataset, R, **kwargs):
     return generators, [int(i) for i in selected], seconds, summarize(counts)
 
 
-def fit_greedy_cpg(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_greedy_cpg(dataset: Dataset, *, delta: float | None = None,
+        R: int | None = None) -> BasisResult:
     """``greedy.core.CPG`` -- generators are the selected snapshots, un-normalized.
 
     Same convention as ``family_a.fit_bee20_cpg`` on generator scaling, but a
@@ -108,7 +116,8 @@ def fit_greedy_cpg(dataset, *, delta=None, R=None) -> BasisResult:
     )
 
 
-def fit_greedy_mcpg(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_greedy_mcpg(dataset: Dataset, *, delta: float | None = None,
+        R: int | None = None) -> BasisResult:
     """``greedy.core.mCPG`` -- independent implementation of [NDEE22] Algorithm 2.
 
     Line 9's constrained shift is solved by ``reduction_common.solve_cone_shift_projection``
@@ -141,7 +150,9 @@ def fit_greedy_mcpg(dataset, *, delta=None, R=None) -> BasisResult:
     )
 
 
-def fit_greedy_adg(dataset, *, delta=None, R=None, normalize_snapshots=True) -> BasisResult:
+def fit_greedy_adg(dataset: Dataset, *, delta: float | None = None,
+                   R: int | None = None,
+                   normalize_snapshots: bool = True) -> BasisResult:
     """Batch Normalized Angular-Defect Greedy -- in neither paper; ``greedy_algos``' own.
 
     Selects on the *angle* between a candidate and its cone projection rather than on
@@ -222,7 +233,8 @@ def fit_greedy_adg(dataset, *, delta=None, R=None, normalize_snapshots=True) -> 
     )
 
 
-def fit_greedy_adg_raw(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_greedy_adg_raw(dataset: Dataset, *, delta: float | None = None,
+        R: int | None = None) -> BasisResult:
     """ADG on un-normalized snapshots -- non-standard; see ``fit_greedy_adg``."""
     return fit_greedy_adg(dataset, delta=delta, R=R, normalize_snapshots=False)
 
@@ -276,7 +288,9 @@ STOPPING_CRITERIA = {
 _EXHAUSTIVE_EPS = 1e-12
 
 
-def fit_greedy_adg_with_criterion(dataset, *, delta=None, R=None,
+
+def fit_greedy_adg_with_criterion(dataset: Dataset, *, delta: float | None = None,
+                                  R: int | None = None,
                                   criterion="relative_change") -> BasisResult:
     """ADG stopped by a chosen rule rather than only by ``r_p <= epsilon``.
 
@@ -302,7 +316,7 @@ def fit_greedy_adg_with_criterion(dataset, *, delta=None, R=None,
 
     errors = [float(e) for e in model.relative_residual_history]
     sizes = [int(s) for s in model.residual_basis_sizes]
-    eps = float(delta)
+    eps = _require_delta(delta)
 
     stop_at = len(errors) - 1
     start = 0 if criterion == "absolute" else 1
@@ -329,6 +343,140 @@ def fit_greedy_adg_with_criterion(dataset, *, delta=None, R=None,
     )
 
 
-def fit_greedy_adg_momentum(dataset, *, delta=None, R=None) -> BasisResult:
+def fit_greedy_adg_momentum(dataset: Dataset, *, delta: float | None = None,
+        R: int | None = None) -> BasisResult:
     return fit_greedy_adg_with_criterion(dataset, delta=delta, R=R,
                                          criterion="relative_change")
+
+
+class _ADGFromZeroCone(AngularDefectGreedy):
+    """ADG whose greedy starts from ``K_0 = {0}`` instead of a seeded pair.
+
+    Everything after the first generator is inherited unchanged -- the angular-defect
+    argmax, the batch admission of every candidate tied at ``theta_max``, the stopping
+    rule. Only the initialization differs, which is what makes the comparison against
+    stock ADG a controlled one.
+
+    **Why the first generator still needs a rule of its own.** With ``K_0 = {0}`` the
+    projection of every snapshot onto the cone is ``0``, so every snapshot has the same
+    angular defect -- a right angle -- and ADG's own selection cannot separate them. Worse
+    than arbitrary: ADG admits *every* candidate attaining ``theta_max`` as one batch, so
+    a literal reading would swallow the entire training set at step one.
+
+    The tie-break is not invented here. ``K_0 = {0}`` is what [BEE20] Algorithm 2 line 2
+    and [NDEE22] Algorithm 2 line 3 both prescribe, and [BEE20] states directly that it
+    makes line 5 collapse to Eq. (56), ``mu_1 in argmax_mu ||lambda(mu)||_Lambda``. So the
+    first generator is **CPG's own first generator**, and this variant is precisely "ADG
+    started the way CPG starts".
+
+    **Selected on raw magnitudes, stored as a unit vector.** The argmax must see the
+    unnormalized snapshots -- Eq. (56) is a statement about the multipliers themselves,
+    and on ``S_norm`` every norm is 1, so the argmax would be a tie settled by storage
+    order. The generator is then normalized, so that it enters a basis the rest of ADG
+    builds on ``S_norm`` rather than sitting in it at a different scale.
+
+    That normalization is a **no-op for everything the benchmark reports**, which is what
+    keeps the ablation clean rather than confounding it with a scaling change:
+    ``span_+{c g} = span_+{g}`` for ``c > 0``, so the cone -- and with it every projection
+    error, coverage, excess, extent and solved error -- is untouched, and
+    ``metrics.stability.gram_conditioning`` column-normalizes before measuring, so the
+    plotted ``gram_cond`` is untouched too. Verified on ``fem_lambda``, where the two arms
+    select the same snapshots from R=2: ``gram_cond`` agrees to six significant figures
+    and every cone metric is bit-identical. Only ``gram_cond_raw``, which is deliberately
+    scale-sensitive and appears on no panel, moves (by 3.4x).
+    """
+
+    def _init_basis(self) -> None:
+        self._basis = []
+        self.selected_indices = []
+        self.initial_pair = None
+        self.initial_pair_angle = None
+        if self.snapshots.shape[0] == 0:
+            return
+        norms = np.linalg.norm(self.snapshots, axis=1)      # raw: [BEE20] Eq. (56)
+        index = int(np.argmax(norms))
+        if norms[index] <= self.zero_tol:
+            return                                          # degenerate: no generator
+        # Selected on the RAW norms, stored NORMALIZED: the choice is CPG's, made on the
+        # multipliers themselves, but the generator then joins a basis the rest of ADG
+        # builds on S_norm.
+        self._basis = [self.snapshots[index] / norms[index]]
+        self.selected_indices = [index]
+
+
+def _fit_angle_k0_fixed_components(snapshots, components, *, zero_tol,
+                                   normalize_snapshots=True):
+    """``fit_angle_fixed_components`` warm-started from the ``K_0 = {0}`` first generator.
+
+    The upstream fitter accepts an initial ``basis``/``selected_indices`` and continues
+    the angular-defect loop from there, so seeding it with the Eq. (56) generator reuses
+    that loop verbatim rather than reimplementing it.
+    """
+    snapshots = np.asarray(snapshots, float)
+    if components <= 0 or snapshots.shape[0] == 0:
+        return np.empty((0, snapshots.shape[1])), [], []
+    norms = np.linalg.norm(snapshots, axis=1)
+    index = int(np.argmax(norms))
+    if norms[index] <= zero_tol:
+        return np.empty((0, snapshots.shape[1])), [], []
+    seed = snapshots[index : index + 1] / norms[index]      # selected raw, stored unit
+    if int(components) == 1:
+        return seed, [index], []
+    return fit_angle_fixed_components(
+        snapshots, int(components), zero_tol=zero_tol,
+        basis=seed, selected_indices=[index],
+        normalize_snapshots=normalize_snapshots,
+    )
+
+
+def fit_greedy_adg_k0(dataset, *, delta=None, R=None) -> BasisResult:
+    """ADG started the way CPG starts -- the ablation of its pair initialization.
+
+    Stock ADG opens with the *pair* of snapshots at the largest mutual angle, which is
+    the one place it departs from [BEE20] Algorithm 2 and [NDEE22] Algorithm 2, both of
+    which start from the empty cone. This arm replaces that opening with CPG's: the
+    snapshot of largest absolute magnitude, chosen on the unnormalized data, normalized,
+    and handed to the same angular-defect loop over the remaining normalized snapshots. That choice is the method's own, and nothing in the
+    benchmark measured whether it earns its keep: every ADG number so far has carried it
+    baked in, with no variant differing only in that respect to compare against.
+
+    This is that variant. Same normalization, same angular-defect rule, same batch
+    admission, same stopping -- only the first step changes. Differences between the two
+    curves are attributable to the initialization and to nothing else.
+
+    A side effect worth having: because it begins with one generator rather than two, its
+    trajectory runs ``R = 1, 2, 3, ...`` and it is defined at ``R = 1``, where stock ADG
+    is not (see ``fit_greedy_adg``).
+    """
+    if R is not None:
+        generators, selected, seconds, counts = _fit_to_cardinality(
+            _fit_angle_k0_fixed_components, dataset, R,
+            zero_tol=_ZERO_TOL["adg"], normalize_snapshots=True,
+        )
+        errors: list[float] = []
+    else:
+        model, generators, seconds, counts = _fit_to_tolerance(
+            _ADGFromZeroCone, dataset, delta,
+            zero_tol=_ZERO_TOL["adg"], normalize_snapshots=True,
+        )
+        selected = [int(i) for i in model.selected_indices]
+        errors = [float(e) for e in model.relative_residual_history]
+    return BasisResult(
+        method="adg_k0",
+        family="greedy.core",
+        paper_tag="",
+        generators=generators,
+        R=int(generators.shape[1]),
+        selected_indices=selected,
+        errors=errors,
+        fit_seconds=seconds,
+        solver_calls=counts,
+        # False. The seed is a unit vector but the generators ADG appends after it are
+        # raw selected snapshots, so the basis is mixed-scale and neither convention
+        # describes it. Claiming True would assert a uniform scaling the cone does not
+        # have. Nothing downstream depends on the distinction: every cone quantity is
+        # scale-invariant and gram_conditioning column-normalizes first.
+        normalized_generators=False,
+        notes="ADG from K_0={0}; first generator by [BEE20] Eq. (56), then angular "
+              "defect; normalize_snapshots=True",
+    )

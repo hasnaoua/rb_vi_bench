@@ -42,6 +42,7 @@ def test_subsample_carries_the_field_geometry_through():
         sub = _subsample(full, 20)
         assert sub.n_snapshots == 20, key
         assert sub.geometry is not None, f"{key}: geometry dropped by subsampling"
+        assert full.geometry is not None, key
         assert sub.geometry.kind == full.geometry.kind, key
         # Geometry describes NODES, which subsampling does not touch.
         assert sub.dim == full.dim, key
@@ -60,12 +61,14 @@ def test_subsample_preserves_split_and_callable():
     assert small.n_snapshots <= 12
     assert small.supports_infsup, "B_of_mu was lost through the rebuild"
     assert small.A is not None
+    assert small.primal_snapshots is not None
     assert small.primal_snapshots.shape[1] == small.n_snapshots
     if small.train_idx is not None:
         assert small.train_idx.max() < small.n_snapshots
     if small.test_idx is not None:
         assert small.test_idx.max() < small.n_snapshots
     # The retained parameters must be the ones B_of_mu now indexes.
+    assert small.B_of_mu is not None and ds.B_of_mu is not None
     assert small.B_of_mu(0).shape == ds.B_of_mu(0).shape
 
 
@@ -319,6 +322,47 @@ def test_adg_momentum_is_drawn_in_every_figure():
 
     assert "adg_momentum" not in FIGURE_EXCLUDED
     assert STYLE["adg_momentum"]["ls"] == "-.", "must be distinguishable where it overlays"
+
+
+def test_every_default_method_has_its_own_style():
+    """A method with no STYLE entry silently falls back to a black dotted line.
+
+    That is how `adg_k0` first shipped: the entry was written against an anchor the
+    module no longer had, the replace no-op'd, and the figure legend showed the raw key
+    in the fallback style -- indistinguishable at a glance from a deliberate choice.
+    Nothing failed, so only the rendered legend gave it away.
+    """
+    from bench.adapters import DEFAULT_METHODS, METHODS
+    from bench.plotting import STYLE
+
+    for key in set(DEFAULT_METHODS) | set(METHODS):
+        assert key in STYLE, f"{key} would be drawn in the fallback style"
+        assert STYLE[key].get("label"), key
+        assert STYLE[key]["label"] != key, f"{key}: label is the raw key"
+
+
+def test_adg_initialization_figure_is_written_per_dataset(tmp_path, bumps):
+    """The initialization ablation gets its own figure, with both arms on it.
+
+    It is kept off the comparison axes deliberately: on most datasets the two coincide
+    exactly, and two identical curves among six others read as a rendering artefact
+    rather than as the result they are.
+    """
+    from bench import figures
+    from bench.runner import _write_csv, run_cell
+
+    rows = []
+    for R in (2, 3, 4, 5):
+        for m in figures.ADG_INIT_METHODS:
+            rows.append(run_cell(bumps, m, R=R, with_infsup=False, with_determinism=False))
+    _write_csv(tmp_path / "grid.csv", rows)
+    out = tmp_path / "figs"
+    assert figures.main(["--results", str(tmp_path), "--out", str(out), "--split"]) == 0
+
+    combined = out / "bumps" / "adg_initialization.png"
+    assert combined.stat().st_size > 5000, "initialization figure missing or empty"
+    split = sorted(p.stem for p in (out / "bumps" / "adg_init").glob("*.png"))
+    assert "precision" in split and "conditioning" in split, split
 
 
 def test_reference_baseline_gets_its_own_figure(tmp_path, bumps):

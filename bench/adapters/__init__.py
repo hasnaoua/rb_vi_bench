@@ -102,6 +102,20 @@ METHODS: dict[str, Method] = {
                          "reaches a target"),
         ),
         Method(
+            key="adg_k0",
+            label="ADG (from $K_0=\\{0\\}$)",
+            fit=family_b.fit_greedy_adg_k0,
+            family="greedy.core",
+            paper_tag="",
+            description=("ABLATION of ADG's initialization: identical angular-defect "
+                         "rule, batch admission, normalization and stopping, but seeded "
+                         "the way CPG seeds -- K_0 = {0}, which collapses the first "
+                         "selection to [BEE20] Eq. (56), argmax ||lambda|| on the "
+                         "UNNORMALIZED snapshots, normalized and handed to the same loop "
+                         "-- rather than the largest-mutual-angle pair. Any difference "
+                         "from `adg` is attributable to the first step alone"),
+        ),
+        Method(
             key="nmf_s0",
             label="NMF (seed 0)",
             fit=baselines.fit_nmf,
@@ -205,6 +219,7 @@ DEFAULT_METHODS: tuple[str, ...] = (
     "mcpg_ndee22",
     "adg",
     "adg_momentum",
+    "adg_k0",
     "nmf_s0",
     "orthant",
 )

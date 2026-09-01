@@ -38,10 +38,12 @@ picks = [(find(1.0, 0.0, 0.0),  "mu=(1.0, 0, 0)"),
          (find(1.2, -0.05, 0.05),"mu=(1.2, -.05, .05)")]
 vmax = max(Lam[:, p].max() for p, _ in picks)
 fig, axes = plt.subplots(1, 4, figsize=(15, 3.6), constrained_layout=True)
+tc = None
 for ax, (p, ttl) in zip(axes, picks):
     tc = ax.tricontourf(tri, Lam[:, p], levels=25, cmap="magma", vmin=0, vmax=vmax)
     ax.set_aspect("equal"); ax.set_title(ttl, fontsize=9)
     ax.set_xlim(-0.36, 0.36); ax.set_ylim(-0.36, 0.36)
+assert tc is not None
 fig.colorbar(tc, ax=axes, shrink=0.8, label=r"contact force  $\lambda(\mu)$")
 fig.suptitle("Membrane obstacle (Sec 5.1): contact-force field over $\\hat\\omega$ "
              "— peak and support shift with $\\mu$", fontsize=11)

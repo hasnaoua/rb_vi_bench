@@ -207,8 +207,135 @@ def test_adg_initializes_with_the_widest_angle_pair(bumps):
     C = U @ U.T
     np.fill_diagonal(C, np.inf)
     i, j = np.unravel_index(int(np.argmin(C)), C.shape)
+    assert model.initial_pair is not None
     assert set(model.initial_pair) == {int(i), int(j)}
     assert model.selected_indices[:2] == list(model.initial_pair)
+
+
+def test_adg_k0_starts_from_the_empty_cone_at_the_largest_norm_snapshot():
+    """The ablation of the pair initialization: K_0 = {0}, i.e. CPG's own first step.
+
+    With the zero cone every snapshot projects to 0, so every angular defect is a right
+    angle and ADG's own rule cannot separate them. That is worse than arbitrary: ADG
+    admits every candidate tied at theta_max as one BATCH, so a literal reading takes the
+    entire training set at step one. [BEE20] states that K_0 = {0} collapses Algorithm 2
+    line 5 to Eq. (56), argmax ||lambda||, and that is the tie-break used -- so this is
+    "ADG started the way the papers start", not ADG with an invented first step.
+
+    The norm is taken on the RAW snapshots even though the variant is normalized: on the
+    normalized set every norm is 1 and the argmax would be settled by storage order.
+    """
+    for key in ("fem_lambda", "gaussian_synth"):
+        ds = ds_mod.load(key)
+        first = METHODS["adg_k0"].fit(ds, R=1)
+        assert first.R == 1, key
+        raw = ds.train()
+        expected = int(np.argmax(np.linalg.norm(raw, axis=0)))
+        assert first.selected_indices == [expected], (key, first.selected_indices)
+        assert first.generators.shape[1] == 1, f"{key}: took the tied batch, not one ray"
+        # Chosen on the RAW magnitudes, stored as a unit vector.
+        assert np.linalg.norm(first.generators[:, 0]) == pytest.approx(1.0)
+        assert np.allclose(first.generators[:, 0],
+                           raw[:, expected] / np.linalg.norm(raw[:, expected]))
+        # It really is CPG's first generator, up to that scaling.
+        cpg = METHODS["cpg_bee20"].fit(ds, R=1)
+        assert cpg.selected_indices[:1] == [expected], key
+
+
+def test_normalizing_the_seed_changes_no_reported_metric():
+    """The seed is stored as a unit vector, and that must not be a second difference.
+
+    The ablation claims to isolate the FIRST SELECTION. If normalizing the seed also
+    moved the numbers, a gap between the two arms could be either that or the scaling,
+    and the figure would not mean what it says. It does not move them, for two reasons
+    worth keeping asserted rather than assumed: span_+{c g} = span_+{g} for c > 0, so
+    every cone quantity is scale-invariant, and gram_conditioning column-normalizes
+    before measuring.
+
+    fem_lambda is the right dataset: the two arms select the same snapshots from R=2, so
+    anything that differed here would be scaling alone.
+    """
+    ds = ds_mod.load("fem_lambda")
+    for R in (2, 4, 6, 8):
+        a = METHODS["adg"].fit(ds, R=R)
+        k = METHODS["adg_k0"].fit(ds, R=R)
+        assert sorted(a.selected_indices) == sorted(k.selected_indices), R
+        assert np.linalg.norm(k.generators[:, 0]) == pytest.approx(1.0)
+
+        ga = metrics.stability.gram_conditioning(a.generators)
+        gk = metrics.stability.gram_conditioning(k.generators)
+        assert gk["gram_cond"] == pytest.approx(ga["gram_cond"], rel=1e-9), R
+        # The deliberately scale-sensitive companion DOES move -- it is on no panel.
+        assert gk["gram_cond_raw"] != pytest.approx(ga["gram_cond_raw"], rel=1e-3)
+
+        ca = metrics.cone_geometry.evaluate(ds, a)
+        ck = metrics.cone_geometry.evaluate(ds, k)
+        for column in set(ca) & set(ck):
+            assert ck[column] == pytest.approx(ca[column], rel=1e-9, nan_ok=True), (R, column)
+
+
+def test_adg_k0_differs_from_adg_only_in_the_first_generator(bumps):
+    """The ablation must be controlled: identical rule everywhere but initialization.
+
+    Once both cones hold the same generators the shared angular-defect rule takes over,
+    so wherever the two agree at some R they must agree at every larger R. A divergence
+    appearing late would mean something beyond the first step differs, and the figure
+    comparing them would not measure what it claims.
+    """
+    for ds in (bumps, ds_mod.load("fem_lambda"), ds_mod.load("hertz_2d")):
+        cap = min(10, ds.train().shape[1])
+        agreed_at = None
+        for R in range(2, cap + 1):
+            a = METHODS["adg"].fit(ds, R=R).generators
+            b = METHODS["adg_k0"].fit(ds, R=R).generators
+            same = a.shape == b.shape and np.allclose(a, b, atol=1e-10)
+            if same and agreed_at is None:
+                agreed_at = R
+            if agreed_at is not None:
+                assert same, (
+                    f"{ds.name}: the initializations agreed at R={agreed_at} and diverged "
+                    f"again at R={R}; something beyond the first step differs"
+                )
+
+
+def test_adg_k0_is_nested_and_defined_where_the_pair_start_is_not():
+    """Beginning from one generator gives it the R=1 that a pair start cannot have.
+
+    Nestedness matters for the same reason it does for the other greedies: the
+    cardinality sweep re-fits at every R, and is one trajectory only if a shorter run is
+    a prefix of a longer one.
+    """
+    ds = ds_mod.load("gaussian_synth")
+    full = METHODS["adg_k0"].fit(ds, R=10).generators
+    for k in range(1, full.shape[1] + 1):
+        part = METHODS["adg_k0"].fit(ds, R=k).generators
+        assert part.shape[1] == k
+        assert np.allclose(part, full[:, :k], atol=1e-10), k
+
+
+def test_both_initializations_are_compared_on_normalized_snapshots():
+    """Both arms normalize, or the comparison is confounded.
+
+    ADG is defined on S_norm. Running one arm un-normalized would change the stopping
+    scale and the selection rule at once, so a gap between the curves could no longer be
+    attributed to the initialization -- which is the only thing the figure claims.
+
+    Normalization here governs the SELECTION, not the stored generators: both arms keep
+    the raw selected snapshots, so both report ``normalized_generators=False``. The
+    un-normalized variant ``adg_raw`` exists and must stay out of the pair, since it
+    would change the selection rule as well as the first step.
+    """
+    from bench.figures import ADG_INIT_METHODS
+
+    assert set(ADG_INIT_METHODS) == {"adg", "adg_k0"}
+    assert "adg_raw" not in ADG_INIT_METHODS
+    ds = ds_mod.load("fem_lambda")
+    for method in ADG_INIT_METHODS:
+        res = METHODS[method].fit(ds, R=5)
+        assert "normalize_snapshots=True" in res.notes, method
+        # Both arms must agree on the generator convention, or the comparison is not
+        # between two cones of the same kind.
+        assert res.normalized_generators is False, method
 
 
 def test_adg_admits_the_whole_tied_batch(bumps):
@@ -395,21 +522,30 @@ def test_default_methods_are_one_canonical_version_per_algorithm():
 
     assert set(DEFAULT_METHODS) <= set(METHODS)
     assert DEFAULT_METHODS == ("cpg_bee20", "mcpg_ndee22", "adg", "adg_momentum",
-                               "nmf_s0", "orthant")
+                               "adg_k0", "nmf_s0", "orthant")
     # POD is deliberately out: it is not a dual basis at all ([BEE20] §5), so scoring it
     # beside methods bound by lambda >= 0 compares different problems. Still registered
     # for the sign-violation checks.
     assert "pod_control" not in DEFAULT_METHODS and "pod_control" in METHODS
 
-    # One implementation per algorithm -- except ADG, which contributes two entries
-    # deliberately: they are the *same* algorithm under two stopping criteria (absolute
-    # error vs relative stagnation), and comparing the criteria is the point.
-    for prefix, expected in (("cpg_", 1), ("mcpg_", 1), ("adg", 2), ("nmf_", 1)):
+    # One implementation per algorithm -- except ADG, which contributes three entries
+    # deliberately. They are the *same* algorithm varied along two separate axes, each
+    # of which is a question the benchmark exists to answer:
+    #   adg / adg_momentum -- two STOPPING criteria (absolute error vs relative
+    #                         stagnation); identical at matched cardinality, where no
+    #                         stopping rule applies.
+    #   adg / adg_k0       -- two INITIALIZATIONS (largest-mutual-angle pair vs the
+    #                         empty cone both papers start from); identical from R=2 on
+    #                         whenever the largest-norm snapshot lies in that pair.
+    # Each pair is a controlled ablation: exactly one thing differs within it.
+    for prefix, expected in (("cpg_", 1), ("mcpg_", 1), ("adg", 3), ("nmf_", 1)):
         n = sum(1 for k in DEFAULT_METHODS
                 if k.startswith(prefix) and not (prefix == "cpg_" and k.startswith("mcpg_")))
         assert n == expected, f"{prefix}: {n} in the default set"
-    # Both ADG entries must be the normalized form; only the stopping rule differs.
-    assert {"adg", "adg_momentum"} <= set(DEFAULT_METHODS)
+    # All three ADG entries are the normalized form -- adg_raw changes the selection rule
+    # itself and would confound either ablation, so it stays out of the default set.
+    assert {"adg", "adg_momentum", "adg_k0"} <= set(DEFAULT_METHODS)
+    assert "adg_raw" not in DEFAULT_METHODS and "adg_raw" in METHODS
 
     # ADG must be the normalized form, never the non-standard one.
     assert "adg_raw" not in DEFAULT_METHODS

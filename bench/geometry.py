@@ -164,6 +164,8 @@ def axial_profile(values: np.ndarray, geom: FieldGeometry) -> np.ndarray:
 
 def axial_coordinate(geom: FieldGeometry) -> np.ndarray:
     """The ``z`` stations in mm, from the geometry's extent."""
+    if geom.shape is None or geom.extent is None:
+        raise ValueError("geometry has no grid shape/extent to take z stations from")
     n_z = geom.shape[1]
     z0, z1 = geom.extent[0], geom.extent[1]
     return np.linspace(z0, z1, n_z)
@@ -196,7 +198,7 @@ def physics_geometry() -> FieldGeometry:
 
     return FieldGeometry(
         kind="grid",
-        shape=tuple(DEFAULT_GRID_SHAPE),
+        shape=(int(DEFAULT_GRID_SHAPE[0]), int(DEFAULT_GRID_SHAPE[1])),
         extent=(0.0, float(HEIGHT_MM), 0.0, float(np.degrees(SECTOR_ANGLE_RAD))),
         xlabel="axial $z$ [mm]",
         ylabel=r"$\theta$ [deg]",

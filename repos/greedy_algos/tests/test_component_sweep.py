@@ -89,8 +89,8 @@ def test_internals_component_sweep_depends_on_still_exist():
     ):
         assert hasattr(model, "_basis")
         assert callable(model._project_onto_cone)
-        assert callable(model._compute_residuals) or callable(
-            model._compute_projection_metrics
+        assert callable(getattr(model, "_compute_residuals", None)) or callable(
+            getattr(model, "_compute_projection_metrics", None)
         )
 
     assert callable(AngularDefectGreedy(snapshots=S, epsilon=1e-2)._init_basis)
@@ -133,6 +133,7 @@ def test_cpg_fixed_components_matches_compute_phases_prefix():
     S = snapshots()
     model = CPG(snapshots=S, epsilon=0.0)
     model.compute_phases()
+    assert model.basis_matrix is not None
 
     basis, selected, _ = fit_cpg_fixed_components(S, components=4, zero_tol=1e-12)
     assert selected == model.selected_indices[:4]

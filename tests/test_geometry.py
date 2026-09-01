@@ -32,6 +32,7 @@ def test_half_disk_is_drawn_as_the_full_symmetric_contact_line():
     for key in ("fem_lambda", "fem_lambda_pressure"):
         d = ds_mod.load(key)
         geom = d.geometry
+        assert geom is not None and geom.coords is not None, key
         assert geom.kind == "mirrored_line", key
         assert len(geom.coords) == 2 * d.dim - 1, "node 0 is on the plane: written once"
         assert geom.coords[0] == pytest.approx(-1.0)
@@ -95,6 +96,7 @@ def test_axial_profile_matches_the_publication_reduction():
 
     ds = ds_mod.load("physics")
     geom = ds.geometry
+    assert geom is not None and geom.shape is not None
     v = ds.snapshots[:, 0]
 
     mine = g.axial_profile(v, geom)
@@ -112,6 +114,7 @@ def test_active_span_uses_the_publication_threshold():
 
     assert g.ACTIVE_THRESHOLD_RATIO == 1.0e-3
     ds = ds_mod.load("physics")
+    assert ds.geometry is not None
     p = g.axial_profile(ds.snapshots[:, 0], ds.geometry)
     mask = g.active_span(p)
     assert mask.any() and not mask.all(), "contact should cover part of the cladding"
@@ -178,6 +181,7 @@ def test_field_rendering_applies_no_colour_transformation():
     from bench import geometry as g
 
     geom = ds_mod.load("physics").geometry
+    assert geom is not None and geom.shape is not None
     assert not hasattr(geom, "log"), "the flag should be gone, not merely set False"
     assert "log" not in geom.clabel.lower()
     for values in (np.array([0.0, 1e-9, 1.0, 5.0, 1234.0]),

@@ -4,6 +4,7 @@ import argparse
 import csv
 import time
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,6 +37,25 @@ from greedy.core.reduction_common import (
     write_angle_history_csv,
     write_error_gain_csv,
 )
+
+
+#: One row of the sweep / summary tables.
+#:
+#: ``Any``, deliberately, and previously ``np.ndarray | list[int] | float | str``.
+#: Two things make that union the wrong shape for this record. It is *progressively
+#: filled*: ``run_method`` returns the fit, then the sweep loop adds the projection
+#: metrics, the cumulative timings and the original-column labels to the same dict, so
+#: no single closed set of keys describes it at every point. And a union is the widest
+#: thing all the values have in common, which means it cannot say which key holds
+#: which type -- so it rejected every ``float(row["fit_seconds"])`` and
+#: ``int(row["components"])`` in this file (64 diagnostics) while catching nothing a
+#: reader would want caught. The conversions at the call sites are what actually
+#: pins the types down, and they are already explicit everywhere.
+#:
+#: A ``TypedDict`` would be the stricter answer if the row were built in one place.
+#: It is not, and modelling the fill-in-stages pattern with one made every direct
+#: ``row[key]`` a "not a required key" error instead.
+ResultRow = dict[str, Any]
 
 
 DEFAULT_OUTPUT_DIR = Path("results/physics/reduction")
@@ -130,7 +150,7 @@ def run_method(
     basis: np.ndarray | None = None,
     selected_indices: list[int] | None = None,
     adg_normalize_snapshots: bool = True,
-) -> dict[str, np.ndarray | list[int] | float | str]:
+) -> ResultRow:
     start = time.perf_counter()
 
     if method == "CPG":
@@ -222,7 +242,7 @@ def method_slug(method: str) -> str:
 
 
 def write_sweep_metrics_csv(
-    rows: list[dict[str, np.ndarray | list[int] | float | str]],
+    rows: list[ResultRow],
     output_path: Path,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,7 +292,7 @@ def write_sweep_metrics_csv(
 
 
 def plot_sweep_metrics(
-    rows: list[dict[str, np.ndarray | list[int] | float | str]],
+    rows: list[ResultRow],
     output_path: Path,
     *,
     error_key: str = "max_relative_residual",
@@ -310,7 +330,7 @@ def plot_sweep_metrics(
 
 
 def error_histories_from_final_bases(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     *,
     relative: bool = False,
@@ -331,7 +351,7 @@ def error_histories_from_final_bases(
 
 
 def save_method_arrays(
-    result: dict[str, np.ndarray | list[int] | float | str],
+    result: ResultRow,
     output_dir: Path,
 ) -> dict[str, Path]:
     slug = method_slug(str(result["method"]))
@@ -353,7 +373,7 @@ def save_method_arrays(
 
 
 def write_metrics_csv(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     displacements: np.ndarray,
     original_indices: np.ndarray,
@@ -416,7 +436,7 @@ def write_metrics_csv(
 
 
 def write_residuals_csv(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     displacements: np.ndarray,
     output_path: Path,
@@ -446,7 +466,7 @@ def write_residuals_csv(
 
 
 def plot_residual_comparison(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     displacements: np.ndarray,
     output_path: Path,
@@ -494,7 +514,7 @@ def plot_residual_comparison(
 
 
 def plot_reconstruction_examples(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     displacements: np.ndarray,
     output_path: Path,
@@ -548,7 +568,7 @@ def plot_reconstruction_examples(
 
 
 def plot_basis_heatmaps(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     output_path: Path,
 ) -> None:
     if not results:
@@ -613,7 +633,7 @@ def _example_rows(
 
 
 def plot_reconstruction_surface_maps(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     displacements: np.ndarray,
     output_path: Path,
@@ -679,7 +699,7 @@ def plot_reconstruction_surface_maps(
 
 
 def plot_reconstruction_error_surface_maps(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     displacements: np.ndarray,
     output_path: Path,
@@ -752,7 +772,7 @@ def plot_reconstruction_error_surface_maps(
 
 
 def plot_basis_surface_maps(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     output_path: Path,
     *,
     grid_shape: tuple[int, int] = DEFAULT_GRID_SHAPE,
@@ -817,7 +837,7 @@ def plot_basis_surface_maps(
 
 
 def write_report(
-    results: list[dict[str, np.ndarray | list[int] | float | str]],
+    results: list[ResultRow],
     snapshots: np.ndarray,
     displacements: np.ndarray,
     original_indices: np.ndarray,
@@ -974,6 +994,11 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    # parse_args gives both a default (2 and 30), so these are non-None for every
+    # command-line run; the None checks in validate_args are for a Namespace built by
+    # hand, and this pins the same expectation for the arithmetic below.
+    assert args.min_components is not None and args.max_components is not None
+
     if args.components is not None:
         components_values = [min(args.components, fit_snapshots.shape[0], fit_snapshots.shape[1])]
     else:
@@ -987,8 +1012,8 @@ def main() -> None:
 
     method_states: dict[str, dict[str, np.ndarray | list[int] | None]] = {}
     cumulative_times: dict[str, dict[str, float]] = {}
-    sweep_rows: list[dict[str, np.ndarray | list[int] | float | str]] = []
-    final_results: list[dict[str, np.ndarray | list[int] | float | str]] = []
+    sweep_rows: list[ResultRow] = []
+    final_results: list[ResultRow] = []
     angle_rows: dict[str, list[tuple[int, float]]] = {}
 
     for component_count in components_values:

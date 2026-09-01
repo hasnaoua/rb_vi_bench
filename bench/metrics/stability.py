@@ -189,8 +189,10 @@ def infsup_report(dataset: Dataset, result: BasisResult, *,
     betas_hf, betas_dec, betas_off, sigmas, c_ss, gordans = [], [], [], [], [], []
     kernel_hits = 0
 
+    B_of_mu = dataset.B_of_mu          # guarded by ``supports_infsup`` at the caller;
+    assert B_of_mu is not None         # bound once so the loop is not an Optional call.
     for i in eval_idx:
-        B_hat = wh.B_hat(dataset.B_of_mu(int(i)))
+        B_hat = wh.B_hat(B_of_mu(int(i)))
         betas_hf.append(inf_sup_hf(B_hat))
         betas_dec.append(inf_sup(B_hat, V_N, cone_tilde))
 

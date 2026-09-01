@@ -211,6 +211,7 @@ def load_contact_force_dataset(
         )
 
     column = spec["scalar_parameter_column"]
+    assert column is None or isinstance(column, int), "scalar_parameter_column"
     if column is None:
         parameters = mu_samples.reshape(-1)
     else:
@@ -252,7 +253,7 @@ def wpod_error(
     """
     snapshots = dataset.snapshots if indices is None else dataset.snapshots[indices]
     upper = la.cholesky(dataset.gram, lower=False)
-    singular_values = la.svdvals(upper @ snapshots.T)
+    singular_values = np.asarray(la.svdvals(upper @ snapshots.T), dtype=float)
     total = float((singular_values ** 2).sum())
     if total <= 0.0:
         return np.zeros(singular_values.size + 1, dtype=float)

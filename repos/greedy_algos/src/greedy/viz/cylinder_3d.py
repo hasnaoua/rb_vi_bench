@@ -640,7 +640,7 @@ def write_static_png(
         ax.view_init(elev=22, azim=-56)
         ax.set_xticks([])
         ax.set_yticks([])
-        ax.set_zticks([])
+        ax.set_zticks([])  # type: ignore[attr-defined]  # Axes3D wrapper, not typed as a method
         ax.set_box_aspect((1, 1, 1.6))
 
     fig.suptitle(

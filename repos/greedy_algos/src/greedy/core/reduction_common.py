@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Mapping
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -258,9 +259,10 @@ def solve_cone_shift_projection(
             objective,
             np.zeros(k),
             jac=gradient,
-            bounds=Bounds(np.zeros(k), np.full(k, np.inf)),
+            bounds=Bounds(np.zeros(k), np.full(k, np.inf)),  # type: ignore[arg-type]
             constraints=[
-                LinearConstraint(constraint_system, -np.inf, constraint_vector + upper_tol)
+                LinearConstraint(constraint_system, -np.inf,
+                                 constraint_vector + upper_tol)  # type: ignore[arg-type]
             ],
             method="SLSQP",
             options={"maxiter": 200 if maxiter is None else maxiter},
@@ -738,7 +740,7 @@ def _compute_gain_series(
 
 
 def write_error_gain_csv(
-    histories: dict[str, tuple[np.ndarray, np.ndarray] | np.ndarray | list[float]],
+    histories: Mapping[str, tuple[np.ndarray, np.ndarray] | np.ndarray | list[float]],
     output_path: Path,
 ) -> None:
     """
@@ -899,7 +901,7 @@ def basis_condition_number(basis: np.ndarray) -> float:
 
 
 def write_angle_history_csv(
-    histories: dict[str, tuple[np.ndarray, np.ndarray]],
+    histories: Mapping[str, tuple[np.ndarray, np.ndarray]],
     output_path: Path,
 ) -> None:
     """Write the (component_count, angle_deg) series behind plot_angle_vs_components."""
@@ -913,7 +915,7 @@ def write_angle_history_csv(
 
 
 def plot_angle_vs_components(
-    histories: dict[str, tuple[np.ndarray, np.ndarray]],
+    histories: Mapping[str, tuple[np.ndarray, np.ndarray]],
     output_path: Path,
     *,
     title: str = "Selected-snapshot angle vs. component count",
@@ -962,7 +964,7 @@ def plot_angle_vs_components(
 
 
 def plot_error_gain(
-    histories: dict[str, tuple[np.ndarray, np.ndarray] | np.ndarray | list[float]],
+    histories: Mapping[str, tuple[np.ndarray, np.ndarray] | np.ndarray | list[float]],
     output_path: Path,
     *,
     title: str,

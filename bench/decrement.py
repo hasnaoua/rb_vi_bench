@@ -43,7 +43,9 @@ from __future__ import annotations
 
 import argparse
 import math
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from . import _paths  # noqa: F401  -- forces Agg before pyplot
 
@@ -134,8 +136,25 @@ ERROR_COLUMN = "train_max_rel_err"
 #: a missing point, and on the epsilon axis the tolerances are *not commensurable across
 #: methods* -- ADG's is per-snapshot, CPG's and mCPG's is a shared absolute threshold --
 #: so the curves may not be read against each other horizontally.
-AXES = {
-    "cardinality": dict(
+@dataclass(frozen=True)
+class _Axis:
+    """One decrement axis. A dataclass rather than a dict because the fields have
+    four different types -- two strings, two flags, and a callable -- and read out of
+    a plain dict they all collapse to their union, which makes ``decrements`` a value
+    a checker has to treat as possibly a ``str`` or a ``bool``."""
+
+    x_column: str
+    reverse: bool
+    invert_axis: bool
+    decrements: Callable[[list[tuple[float, float]]], tuple[list, list]]
+    xlabel: str
+    title: str
+    caption: str
+    stem: str
+
+
+AXES: dict[str, _Axis] = {
+    "cardinality": _Axis(
         x_column="R",
         reverse=False,
         invert_axis=False,
@@ -146,7 +165,7 @@ AXES = {
                  "0 = it bought nothing"),
         stem="vs_cardinality",
     ),
-    "tolerance": dict(
+    "tolerance": _Axis(
         x_column="delta",
         # Loose to tight, i.e. decreasing epsilon.
         reverse=True,
@@ -166,21 +185,21 @@ def figure_for_axis(mode: str, dataset, rows_by_method, out: Path) -> Path | Non
     spec = AXES[mode]
     series = {}
     for method, rows in rows_by_method.items():
-        pts = sorted({_num(r, spec["x_column"]): _num(r, ERROR_COLUMN) for r in rows}.items(),
-                     reverse=spec["reverse"])
-        series[method] = spec["decrements"](pts)
+        pts = sorted({_num(r, spec.x_column): _num(r, ERROR_COLUMN) for r in rows}.items(),
+                     reverse=spec.reverse)
+        series[method] = spec.decrements(pts)
 
     fig, ax = plt.subplots(figsize=(8.2, 5.0))
-    if not _draw(ax, series, spec["xlabel"], f"{dataset} — {spec['title']}", "linear",
+    if not _draw(ax, series, spec.xlabel, f"{dataset} — {spec.title}", "linear",
                  mode=mode):
         discard(fig)
         return None
-    if spec["invert_axis"]:
+    if spec.invert_axis:
         ax.invert_xaxis()
     ax.legend(fontsize=7.5, ncol=2, frameon=False, loc="best")
-    fig.text(0.5, -0.02, spec["caption"], ha="center", fontsize=8, color="#555555")
+    fig.text(0.5, -0.02, spec.caption, ha="center", fontsize=8, color="#555555")
     fig.tight_layout()
-    return save(fig, layout.ensure(layout.decrement_dir(out, dataset)) / f"{spec['stem']}.png")
+    return save(fig, layout.ensure(layout.decrement_dir(out, dataset)) / f"{spec.stem}.png")
 
 
 def main(argv=None) -> int:

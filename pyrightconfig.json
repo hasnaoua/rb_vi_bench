@@ -1,0 +1,16 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+
+  "typeCheckingMode": "standard",
+
+  "extraPaths": [
+    "repos/rb_vi_shared",
+    "repos/rb_contact_cpg/src",
+    "repos/stable_model_reduction_vi/src",
+    "repos/greedy_algos/src"
+  ],
+
+  "include": ["bench", "tests", "repos"],
+  "exclude": ["**/node_modules", "**/__pycache__", ".venv", "**/results", "**/data"]
+}

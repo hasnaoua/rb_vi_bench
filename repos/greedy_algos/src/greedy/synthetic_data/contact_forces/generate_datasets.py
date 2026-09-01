@@ -10,8 +10,8 @@ Each .npz bundles everything CPG / mCPG needs:
 """
 import os
 import numpy as np
-import membrane_hf as mhf
-import hertz_hf as hz
+from . import hertz_hf as hz
+from . import membrane_hf as mhf
 
 OUT = "/mnt/user-data/outputs"
 os.makedirs(OUT, exist_ok=True)

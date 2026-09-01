@@ -33,7 +33,7 @@ def wnorm(a, W):
 def wpod_error(Lam, W):
     """Relative W-norm POD projection error e(R), R = 0..rank. Baseline for CPG."""
     L = la.cholesky(W + 1e-12 * np.eye(W.shape[0]), lower=False)
-    s = la.svdvals(L @ Lam)
+    s = np.asarray(la.svdvals(L @ Lam), dtype=float)
     tot = (s ** 2).sum()
     return np.array([np.sqrt(max(tot - (s[:R] ** 2).sum(), 0) / tot)
                      for R in range(len(s) + 1)])

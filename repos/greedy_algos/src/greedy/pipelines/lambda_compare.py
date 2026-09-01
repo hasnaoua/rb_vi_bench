@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -86,8 +87,8 @@ def basis_condition_and_size(path: Path) -> tuple[float, int]:
 def gather_results(
     snapshots: np.ndarray,
     specs: list[tuple[str, Path, Path, Path]],
-) -> dict[str, dict[str, np.ndarray]]:
-    results: dict[str, dict[str, np.ndarray]] = {}
+) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
     for name, path, report_path, basis_path in specs:
         reconstruction = load_reconstruction(path, snapshots)
         if reconstruction is None:
@@ -106,7 +107,7 @@ def gather_results(
 
 
 def write_metrics(
-    results: dict[str, dict[str, np.ndarray]],
+    results: dict[str, dict[str, Any]],
     output_path: Path,
     *,
     train_indices: np.ndarray,
@@ -168,7 +169,7 @@ def write_metrics(
 
 def plot_residual_comparison(
     radii: np.ndarray,
-    results: dict[str, dict[str, np.ndarray]],
+    results: dict[str, dict[str, Any]],
     output_path: Path,
 ) -> None:
     fig, axes = plt.subplots(2, 1, figsize=(10.5, 7.4), sharex=True)
@@ -209,7 +210,7 @@ def plot_residual_comparison(
 
 
 def plot_bar_summary(
-    results: dict[str, dict[str, np.ndarray]],
+    results: dict[str, dict[str, Any]],
     output_path: Path,
     *,
     test_indices: np.ndarray,
@@ -241,7 +242,7 @@ def plot_bar_summary(
 
 
 def plot_runtime_size_summary(
-    results: dict[str, dict[str, np.ndarray]],
+    results: dict[str, dict[str, Any]],
     output_path: Path,
 ) -> None:
     methods = list(results)
@@ -280,7 +281,7 @@ def plot_runtime_size_summary(
 def plot_reconstruction_comparison(
     snapshots: np.ndarray,
     radii: np.ndarray,
-    results: dict[str, dict[str, np.ndarray]],
+    results: dict[str, dict[str, Any]],
     output_path: Path,
     *,
     max_examples: int,

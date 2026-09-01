@@ -19,6 +19,7 @@ Subclasses implement ``compute_phases()`` and override the hooks they need:
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import numpy as np
 
 from greedy.core.reduction_common import row_map, solve_nonnegative_least_squares
@@ -189,17 +190,24 @@ class ConeGreedy:
     # Public diagnostics
     # ------------------------------------------------------------------
 
-    def _require_fitted(self) -> None:
+    def _require_fitted(self) -> np.ndarray:
+        """Return the fitted basis, raising if ``compute_phases`` has not run.
+
+        Returns the matrix rather than only raising, so that callers can bind the
+        result: ``basis_matrix`` is ``None`` until the fit, and a type checker cannot
+        narrow an attribute through a helper that merely raises on its behalf.
+        """
         if self.basis_matrix is None:
             raise RuntimeError("Call compute_phases() first.")
+        return self.basis_matrix
 
     def project(self, v: np.ndarray) -> np.ndarray:
         """Project an arbitrary vector onto the computed cone."""
-        self._require_fitted()
+        basis = self._require_fitted()
         v = np.asarray(v, dtype=float)
-        if self.basis_matrix.size == 0:
+        if basis.size == 0:
             return np.zeros_like(v)
-        A = self.basis_matrix.T
+        A = basis.T
         return A @ solve_nonnegative_least_squares(A, v)
 
     @staticmethod
@@ -213,21 +221,21 @@ class ConeGreedy:
 
     def plot_basis(
         self,
-        ax: plt.Axes | None = None,
+        ax: Axes | None = None,
         snapshot_labels: list[int] | np.ndarray | None = None,
-    ) -> plt.Axes:
+    ) -> Axes:
         """Plot each generator of the computed cone."""
-        self._require_fitted()
+        basis = self._require_fitted()
         if ax is None:
             _, ax = plt.subplots(figsize=(10, 5))
 
-        for k, vector in enumerate(self.basis_matrix):
+        for k, vector in enumerate(basis):
             label = self._snapshot_label(k, self.selected_indices, snapshot_labels)
             ax.plot(vector, label=f"basis {k + 1}  (snap #{label})")
 
         ax.set_title(
             f"{self._display_name} basis  "
-            f"(R = {len(self.basis_matrix)}, epsilon = {self.epsilon:g})"
+            f"(R = {len(basis)}, epsilon = {self.epsilon:g})"
         )
         ax.set_xlabel(self._basis_xlabel)
         ax.set_ylabel(self._basis_ylabel)
@@ -235,7 +243,7 @@ class ConeGreedy:
         ax.grid(True, alpha=0.3)
         return ax
 
-    def plot_convergence(self, ax: plt.Axes | None = None) -> plt.Axes:
+    def plot_convergence(self, ax: Axes | None = None) -> Axes:
         """Plot the max residual r_n against cone size."""
         if not self.residual_history:
             raise RuntimeError("Call compute_phases() first.")
@@ -260,9 +268,9 @@ class ConeGreedy:
         return ax
 
     def __repr__(self) -> str:
-        fitted = self.basis_matrix is not None
-        R = len(self.basis_matrix) if fitted else len(self._basis)
-        status = f"R={R}" if fitted else "not yet run"
+        R = (len(self.basis_matrix) if self.basis_matrix is not None
+             else len(self._basis))
+        status = f"R={R}" if self.basis_matrix is not None else "not yet run"
         return (
             f"{type(self).__name__}(epsilon={self.epsilon:g}, "
             f"N_train={len(self.snapshots)}, {status})"

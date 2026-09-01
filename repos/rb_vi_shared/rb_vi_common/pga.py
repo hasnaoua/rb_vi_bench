@@ -114,6 +114,9 @@ def pga(B_hats, V_N, cone_tilde, delta, max_iter=None, verbose=False):
         # Z c_max. This is the "eigenvalue problem" of §3 -- concretely the
         # leading singular pair of (I - QQ^T) Z.
         _, c = sigma_S(Zs[idx], Q)
+        # sigma_S hands back c=None only for an empty S_R(mu), whose sigma is 0.0 and
+        # so cannot have passed this loop's own `sig[idx] > delta` test.
+        assert c is not None
         v1 = Zs[idx] @ c
 
         # 6: v^(2)_{n+1} := (I - Pi_{V_N+S^n}) v^(1)_{n+1}

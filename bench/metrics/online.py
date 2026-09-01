@@ -131,14 +131,22 @@ def solved_errors(dataset: Dataset, cone: np.ndarray, V: np.ndarray) -> dict[str
     idx = np.asarray(idx, int)
     if idx.size == 0 or np.asarray(cone).shape[1] == 0:
         return {}
+    # ``supports_online`` already implies all five are present, but a type checker
+    # cannot narrow an Optional through a property, and calling four of them below
+    # would be a TypeError if a caller ever skipped that guard. Bind them once.
+    A, B_of_mu = dataset.A, dataset.B_of_mu
+    rhs_of_mu, gap_of_mu = dataset.rhs_of_mu, dataset.gap_of_mu
+    if (A is None or B_of_mu is None or rhs_of_mu is None
+            or gap_of_mu is None or dataset.primal_snapshots is None):
+        return {}
     U = np.asarray(dataset.primal_snapshots, float)
     L = np.asarray(dataset.snapshots, float)
     primal, dual = [], []
     for q in idx:
         q = int(q)
         u_hat, lam_hat = solve_reduced_general(
-            dataset.A, dataset.rhs_of_mu(q), dataset.gap_of_mu(q),
-            V, cone, dataset.B_of_mu(q),
+            A, rhs_of_mu(q), gap_of_mu(q),
+            V, cone, B_of_mu(q),
         )
         primal.append(_rel(u_hat, U[:, q]))
         dual.append(_rel(lam_hat, L[:, q]))
