@@ -1,0 +1,456 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage[table]{xcolor}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.7em}{}
+\setlist{itemsep=2pt,parsep=0pt,topsep=3pt}
+
+\newcommand{\Kfull}{K_{\mathrm{full}}}
+\newcommand{\spanp}{\operatorname{span}_+}
+\newcommand{\Wp}{W^{+}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\bee}{\textsf{[BEE20]}}
+\newcommand{\ndee}{\textsf{[NDEE22]}}
+
+\title{\textbf{rb\_vi\_bench}\\[2mm]
+\large Reduced-basis dual cones for variational inequalities:\\
+algorithms, metrics, and measured results}
+\author{Benchmark report}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+This report documents the benchmark assembled from three source repositories for
+reduced-basis (RB) model order reduction of contact problems. It states the problem
+setting, every selection algorithm under test, the exact computational definition of
+every metric, and the results measured on the three retained contact datasets. The
+object under study throughout is the \emph{dual} cone: the reduced set from which
+Lagrange multipliers are drawn, on which non-negativity must hold.
+Sources: \bee{} = Benaceur, Ern, Ehrlacher (\texttt{hal-02081485v2});
+\ndee{} = Niakh, Drouet, Ehrlacher, Ern (ESAIM M2AN, 2022). Both papers number their
+algorithms and equations independently, so every citation below carries its paper tag.
+\end{abstract}
+
+\section{Problem setting}
+
+The high-fidelity (HF) problem is a discrete variational inequality of contact type: find
+the displacement $u(\mu)\in\R^{N}$ and multiplier $\lambda(\mu)\in\R^{m}$ solving the
+saddle-point system
+\begin{equation}
+A\,u(\mu) + B(\mu)^{\!\top}\lambda(\mu) = f(\mu), \qquad
+B(\mu)\,u(\mu) \le g(\mu), \qquad
+\lambda(\mu)\ge 0 ,
+\label{eq:hf}
+\end{equation}
+with complementarity between the last two. The sign condition $\lambda\ge 0$ is physical:
+contact pressure pushes, it does not pull.
+
+Reduction replaces $\R^{m}$ by a low-dimensional set for $\lambda$. That set cannot be a
+\emph{subspace}: a subspace closed under negation cannot enforce $\lambda\ge 0$. It must
+be a finitely generated \textbf{convex cone}
+\begin{equation}
+W_R^{+} \;=\; \spanp\{\xi_1,\dots,\xi_R\}
+\;=\;\Bigl\{\textstyle\sum_{r=1}^{R} c_r\,\xi_r \;:\; c_r\ge 0\Bigr\},
+\qquad \xi_r \ge 0 .
+\label{eq:cone}
+\end{equation}
+With $\xi_r\ge0$ and $c_r\ge0$, membership of the cone \emph{implies} the sign condition.
+This is the single structural reason the whole family of methods exists, and it is why
+POD is inadmissible here: its modes have mixed signs (\bee{}~\S5).
+
+Two derived objects are used repeatedly. The \textbf{full snapshot cone}
+$\Kfull=\spanp\{\theta_1,\dots,\theta_Q\}$ is everything the training multipliers
+generate; and the \textbf{non-negative orthant} $\Wp=\{x\in\R^m: x\ge0\}$ is the largest
+admissible set of all. Every method produces some $W_R^+$ with
+$W_R^+\subseteq\Wp$, but---importantly---\emph{not} necessarily $W_R^+\subseteq\Kfull$.
+
+The \textbf{cone projection} $\Pi_K(x)=\arg\min_{y\in K}\|x-y\|$ is computed by
+non-negative least squares (NNLS) on the generator matrix. It is non-linear in $x$, which
+is what makes every error below more expensive than a linear projection and is the unit
+in which offline cost is counted.
+
+\section{Algorithms under test}
+
+All greedy methods are \emph{hierarchical}: the cone at cardinality $R$ is a sub-cone of
+the cone at $R+1$. This is verified rather than assumed
+(\S\ref{sec:protocol}). NMF is not hierarchical, and that difference is visible in
+several metrics.
+
+\subsection{CPG --- Cone-Projected Greedy (\bee{}, Algorithm 2)}
+
+Start from $K_0=\{0\}$. At step $r$, select the training snapshot worst represented by
+the cone built so far, and append it unchanged:
+\begin{equation}
+q_r \in \arg\max_{q}\;\bigl\| \theta_q - \Pi_{K_{r-1}}(\theta_q)\bigr\|,
+\qquad K_r = \spanp\{\theta_{q_1},\dots,\theta_{q_r}\}.
+\label{eq:cpg}
+\end{equation}
+Because $K_0=\{0\}$ gives $\Pi_{K_0}\equiv 0$, the first step reduces to
+$q_1\in\arg\max_q\|\theta_q\|$, which is \bee{}~Eq.~(56). The generators are
+\emph{selected snapshots}, so $K_R\subseteq\Kfull$ holds by construction.
+
+\subsection{mCPG --- modified CPG (\ndee{}, Algorithm 2)}
+
+Same selection loop, but the appended generator is a \emph{residual} rather than the
+snapshot: $\nu_r = (\theta_q-\Upsilon_r)/\|\cdot\|$ with
+$\Upsilon_r\in K_{r-1}\cap(\theta_q-\Wp)$. The second constraint forces $\nu_r\ge0$, i.e.
+membership of $\Wp$, which is the property the method needs. It does \emph{not} force
+membership of $\Kfull$: a difference of two elements of $\spanp\{\theta\}$ need not lie
+in $\spanp\{\theta\}$. This is measured directly (\S\ref{sec:results}).
+
+\subsection{ADG --- Batch Normalized Angular-Defect Greedy}
+
+Not in either paper; contributed by the \texttt{greedy\_algos} source. Two departures
+from CPG:
+
+\begin{itemize}
+\item \textbf{Angular selection.} It ranks candidates by the angle between a snapshot and
+its cone projection, $\theta_K(x) = \angle\bigl(x,\Pi_K(x)\bigr)$, rather than by residual
+magnitude. On the normalized set $S_{\mathrm{norm}}=\{x/\|x\|\}$ the two induce the same
+ordering, since the residual is $\sin\theta_K(x)$; un-normalized they differ. ADG is
+therefore \emph{defined} on $S_{\mathrm{norm}}$, and the tolerance becomes a genuine
+per-snapshot relative bound $\varepsilon\in(0,1)$ rather than one shared absolute
+threshold $\varepsilon\max_q\|\theta_q\|$.
+\item \textbf{Batch admission.} Every candidate attaining the maximal defect
+$\theta_{\max}$ enters in one round, not just one. This is what the method's
+Theorem 3.5 certificate rests on.
+\end{itemize}
+
+\noindent Three ADG variants are benchmarked, each differing from the base in exactly one
+respect, so that any measured gap is attributable:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+key & varies & against \\
+\midrule
+\texttt{adg}          & --- (reference form) & \\
+\texttt{adg\_momentum}& stopping rule: $|e(p)-e(p-1)|/e(p-1)\le\varepsilon$ & \texttt{adg} \\
+\texttt{adg\_k0}      & initialization: $K_0=\{0\}$, i.e. CPG's first step & \texttt{adg} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The base ADG initializes not from $K_0=\{0\}$ but from the \emph{pair} of
+snapshots at the largest mutual angle. This is its one departure from both papers, and
+\texttt{adg\_k0} is its ablation: the first generator is instead
+$\arg\max_q\|\theta_q\|$ taken on the \emph{unnormalized} snapshots (\bee{} Eq.~(56)),
+normalized, after which the identical angular loop runs. Note that $K_0=\{0\}$ does not
+by itself define ADG's first step: with the zero cone every defect is a right angle, all
+candidates tie, and batch admission would take the entire training set at once ---
+Eq.~(56) is the tie-break the papers supply. A consequence of the pair start is that base
+ADG has \emph{no} $R=1$ state; its trajectory is $R=2,3,4,\dots$
+
+\subsection{Baselines}
+
+\begin{itemize}
+\item \textbf{NMF} (\bee{}~\S6.4): optimized non-negative atoms, free to sit anywhere in
+$\Wp$. A genuine competitor, but cardinality-only --- \bee{}~\S5's objection is precisely
+that ``the user does not specify an error tolerance but only the cardinality'' --- and
+non-deterministic in its initialization.
+\item \textbf{Orthant} (reference, not a competitor): canonical directions $e_i$ selected
+along mCPG's own iteration, so the only difference from mCPG is the generator itself. Its
+pairwise angles are exactly $90^{\circ}$, the widest any cone in $\Wp$ can be. Its
+reported cost is the mCPG ordering run, not the (free) cone assembly.
+\item \textbf{POD} (\emph{negative} control): the best unconstrained reconstruction at a
+given cardinality, and a direct measurement of the sign violation that motivates the cone
+construction. Its non-negativity check is \emph{expected} to fail.
+\end{itemize}
+
+\section{Metrics: how each is computed}
+
+\subsection{Precision}
+For a cone $W_R^+$ with generator matrix $\Xi$, each snapshot is projected by NNLS and the
+residual is reported relative to a normalizer. Two normalizers are reported because they
+answer different questions:
+\begin{equation}
+\underbrace{\frac{\|\theta_q-\Pi(\theta_q)\|}{\max_{q'}\|\theta_{q'}\|}}_{\text{shared denominator}}
+\qquad\text{and}\qquad
+\underbrace{\frac{\|\theta_q-\Pi(\theta_q)\|}{\|\theta_q\|}}_{\text{per-snapshot}} .
+\end{equation}
+The shared denominator keeps the number comparable against the tolerance that produced it;
+the per-snapshot form is what ADG's tolerance actually bounds. They diverge whenever
+snapshot magnitudes spread. Train and test are reported separately.
+
+\textbf{Non-negativity} is checked on the reconstruction:
+$\texttt{nn\_max\_violation}=\max(0,-\min_i \hat\lambda_i)$.
+
+\subsection{Performance (offline cost)}
+Wall-clock is machine-dependent, so the primary cost is a \emph{count of constrained
+solver calls} --- NNLS, \texttt{lsq\_linear} and \texttt{minimize} --- captured by
+instrumenting the solvers during a fit. One caveat governs its reading: it counts
+\emph{constrained} solves only, so NMF records exactly $0$, meaning ``issues none'', not
+``is free''. ADG likewise records $0$ at $R=1,2$, because it seeds from a Gram-matrix
+argmin and NNLS first appears at $R=3$.
+
+\subsection{Stability}
+\begin{itemize}
+\item \textbf{Gram conditioning:} $\kappa(\hat\Xi^{\!\top}\hat\Xi)$ on
+\emph{column-normalized} generators. Normalizing is essential: without it the number is
+dominated by snapshot magnitude spread, and \bee{} (raw generators) and \ndee{}
+(normalized) would be incomparable. Undefined for $R<2$ and reported as such.
+\item \textbf{Orthogonality} $e_{\mathrm{orth}}$ (\ndee{}~Eq.~41):
+$\|(I-\Pi_{K_r})(\nu_{r+1})\|$, the sine of the angular defect of each accepted generator.
+\item \textbf{Determinism:} across-seed spread, which is the non-determinism \bee{}~\S5
+raises against NMF.
+\end{itemize}
+
+\subsection{Cone geometry}
+This family scores the cone against $\Kfull$ rather than against the finite snapshot set,
+by Monte-Carlo sampling of Dirichlet$(1)$ conic combinations.
+\begin{align}
+\text{missed (too small)}&:\quad \mathbb{E}_{x\sim \Kfull}\;\bigl\|x-\Pi_{W_R^+}(x)\bigr\|,\\
+\text{excess (too large)}&:\quad \mathbb{E}_{x\sim W_R^+}\;\bigl\|x-\Pi_{\Kfull}(x)\bigr\|,\\
+\text{two-sided}&:\quad \tfrac12\bigl(\text{missed}+\text{excess}\bigr).
+\end{align}
+Neither direction implies the other: a cone can cover $\Kfull$ perfectly while extending
+far beyond it, or sit strictly inside while missing most of it. The two-sided figure is
+the \emph{average}, not the maximum. A maximum reports only whichever direction is larger
+and so silently changes which quantity it plots from one method to the next; the average
+is the same functional for every method, keeps both faults in view, and is still a metric
+on cones (symmetric, zero only when both vanish, triangle inequality inherited).
+
+\subsubsection*{Extent (how much space the cone encloses)}
+Cut $W_R^+$ by a hyperplane $\langle x,u\rangle = h$ shared by every method, with
+$u=(1,\dots,1)/\sqrt m$ --- strictly positive on $\Wp\setminus\{0\}$, so the cut is
+transversal for every admissible cone, and no coordinate is privileged. The section is the
+convex hull of $p_i = h\,\xi_i/\langle \xi_i,u\rangle$, and what is reported is its
+\textbf{mean width}, normalized by that of $\Kfull$'s section:
+\begin{equation}
+\mathrm{extent}(W_R^+) \;=\; \frac{w(S_R)}{w(S_{\mathrm{full}})},
+\qquad
+w(S) \;=\; \mathbb{E}_{g\sim\mathcal N(0,I_m)}\Bigl[\max_i\langle p_i,g\rangle-\min_i\langle p_i,g\rangle\Bigr].
+\end{equation}
+Three properties make this the right statistic, and each rules out an alternative that was
+tried and discarded:
+\begin{itemize}
+\item \emph{Measured in the dimension of the space, not the number of generators.} The
+$\xi_i$ are $R$ rays in $\R^m$ with $R\ll m$; they are not a basis. Taking the section's
+$(R{-}1)$-volume builds the method's cardinality into the yardstick.
+\item \emph{Monotone in $R$ by construction.} $W_R^+\subseteq W_{R+1}^+$, so the section
+can only grow; more vertices means a maximum over a superset, so the integrand rises
+pointwise in $g$. The Gaussian directions are drawn once from a fixed seed, so monotonicity
+holds per realization and Monte-Carlo noise cannot manufacture a decrease.
+\item \emph{Positive on a thin cone,} where every ambient volume, solid angle or
+covered-sphere fraction is identically zero.
+\end{itemize}
+Values above $1$ are meaningful: the cone is wider than $\Kfull$, which requires leaving
+it. Scale-invariance ($\spanp\{c\xi\}=\spanp\{\xi\}$) means generator normalization cannot
+affect it.
+
+\subsubsection*{Aperture (conditioning, \emph{not} extent)}
+Mean pairwise angle between normalized generators. Retained as a conditioning diagnostic
+only. It is not a measure of enclosed space: it saturates once generators are mutually
+well separated, and a generator added strictly \emph{inside} the cone enlarges the region
+not at all while still moving the mean.
+
+\subsection{Solved error (\texttt{metrics.online})}
+Every metric above scores a cone against snapshots; none solves anything. This one
+assembles and solves the reduced saddle-point problem (\bee{}~Alg.~1 line 4) at each
+held-out parameter,
+\begin{equation}
+\hat A = V^{\!\top}\!AV,\quad
+\hat B = \Xi^{\!\top}\!B(\mu)V,\quad
+\min_{\alpha\ge0}\;\tfrac12\alpha^{\!\top}\hat B\hat A^{-1}\hat B^{\!\top}\alpha
+- \alpha^{\!\top}\!\bigl(\hat B\hat A^{-1}\hat f-\hat g\bigr),
+\end{equation}
+and reports the relative error in \emph{both} components against the HF solution. The
+bound $\alpha\ge0$ is the discrete form of $\spanp$, and it is why the recovered
+$\hat\lambda=\Xi\alpha$ is non-negative exactly rather than approximately. Projection
+error and solved error are different functionals of the same cone: the solve minimizes an
+energy over $W_R^+$, it does not project the true multiplier onto it.
+
+\subsection{Cross-implementation agreement}
+Two independent transcriptions of CPG and of mCPG are retained deliberately. Agreement
+between them is checked at matched tolerance, so that a disagreement is a \emph{finding}
+about an under-specified step rather than a rounding difference.
+
+\section{Experimental protocol}\label{sec:protocol}
+
+\textbf{Datasets.} Three contact problems on real geometry:
+
+\begin{center}
+\begin{tabular}{@{}llrl@{}}
+\toprule
+key & reported name & $\dim\times n$ & geometry \\
+\midrule
+\texttt{fem\_lambda}  & Half-disks of Hertz  & $57\times 50$   & mirrored contact line \\
+\texttt{physics}      & 3D Pellet-Cladding   & $7676\times 94$ & $76\times101$ surface grid \\
+\texttt{membrane\_2d} & membrane (2-D)       & $497\times125$  & scattered 2-D patch \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Two modes, never mixed.} \emph{Matched tolerance} gives every method the same
+$\varepsilon$ and reports the $R$ it needed; \emph{matched cardinality} gives every method
+the same $R$. Only the second is used for comparison figures, because tolerances are not
+commensurable across methods (ADG's is per-snapshot relative; CPG/mCPG's is one shared
+absolute threshold).
+
+\textbf{One greedy trajectory.} The cardinality sweep re-fits at each $R$. That is only
+legitimate if a greedy stopped at $R$ yields exactly the first $R$ generators of a longer
+run, so the property is asserted by test rather than assumed --- and testing it found a
+real violation, since the upstream fixed-component helper answered $R=1$ for ADG through a
+different selection rule.
+
+\textbf{Skips are recorded, never dropped.} A cell that does not run emits a
+\texttt{skip\_reason}, because ``not measured here'' and ``scored badly here'' must never
+be confusable.
+
+\textbf{Axes.} All figure axes are linear, with one documented exception: the Gram
+condition number, which is $\ge1$ by definition (so the zero-dropping failure of a log
+axis cannot occur) and spans eleven decades before the basis goes singular.
+
+\section{Results}\label{sec:results}
+
+All numbers below are medians over the matched-cardinality sweep $R=1,\dots,40$ on the
+three datasets, from the current run (817 of 840 cells; 1848\,s).
+
+\subsection{Non-negativity holds, exactly, for every cone method}
+Across all 817 cells and every cone method, the maximum non-negativity violation of the
+reconstruction is exactly $0$. This is structural, not numerical: $c\ge0$ and $\xi\ge0$.
+The POD negative control behaves as \bee{}~\S5 predicts and fails: at $R=8$ it violates on
+$12.9\%$ of entries on Half-disks and $89.4\%$ on Pellet-Cladding. Driven through the
+reduced \emph{solve}, POD's recovered multiplier reaches $-195$ where every cone method
+returns exactly $0$.
+
+\subsection{Precision and cost}
+\begin{center}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+dataset & method & test err & solves & extent & two-sided \\
+\midrule
+3D Pellet-Cladding & CPG   & \textbf{0.00261} & 1880 & 0.717 & \textbf{0.00024} \\
+                   & mCPG  & 0.00339 & 762  & 5.74  & 0.0430 \\
+                   & ADG   & 0.01482 & \textbf{893}  & 0.999 & 0.00232 \\
+                   & NMF   & 0.01272 & 0    & 1.47  & 0.0489 \\
+\midrule
+Half-disks of Hertz & CPG  & 0.0599 & 1240 & 0.999 & \textbf{0.00014} \\
+                    & mCPG & 0.0561 & 305  & 16.4  & 0.105 \\
+                    & ADG  & 0.0599 & \textbf{589}  & 0.999 & 0.00016 \\
+                    & NMF  & \textbf{0.0297} & 0    & 14.4  & 0.0451 \\
+\midrule
+membrane (2-D) & CPG  & 0.630 & 4000 & 0.923 & 0.0839 \\
+               & mCPG & 0.625 & 1849 & 0.947 & 0.0871 \\
+               & ADG  & 0.619 & \textbf{1900} & 0.906 & \textbf{0.0532} \\
+               & NMF  & \textbf{0.591} & 0    & 1.39  & 0.0891 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent\textbf{ADG costs consistently about half of CPG.} The median ratio of
+constrained solver calls, CPG over ADG at matched $R$, is $2.15\times$, $2.20\times$ and
+$2.15\times$ on the three datasets --- remarkably stable across problems differing by two
+orders of magnitude in dimension. On Half-disks ADG reaches the identical test error for
+that halved cost.
+
+\noindent\textbf{NMF wins on raw reconstruction where it wins,} reproducing \bee{}'s own
+honest finding, but at a cost the offline column cannot show and with cones that reach far
+outside $\Kfull$ (extent $14.4$ on Half-disks).
+
+\subsection{mCPG leaves the snapshot cone --- and how much depends on the data}
+\ndee{}~Remark 4.3's parenthetical claims $\nu_r$ lies ``in fact of
+$\mathrm{Span}^+(\{\theta_{q_n}\})$''. It does not hold as stated. The fraction of mCPG
+generators lying outside $\Kfull$ (median over the sweep):
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+ & CPG & mCPG & ADG \\
+\midrule
+3D Pellet-Cladding  & 0.000 & 0.271 & 0.000 \\
+Half-disks of Hertz & 0.000 & \textbf{0.917} & 0.000 \\
+membrane (2-D)      & 0.000 & \textbf{0.951} & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent What \emph{does} hold is the $\Wp$ membership the same sentence claims first,
+and that is the part the construction rests on. CPG and ADG are at exactly $0$ by
+construction, as they must be: their generators \emph{are} snapshots. The extent metric
+confirms this independently --- mCPG's cone is $5.7\times$ to $16.4\times$ wider than
+everything the snapshots generate, which is only possible by leaving $\Kfull$.
+
+\subsection{ADG's pair initialization: mostly irrelevant, and never decisive}
+Comparing base ADG against \texttt{adg\_k0} (CPG's first step) at matched $R$:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+dataset & pair better & $K_0=\{0\}$ better & identical \\
+\midrule
+3D Pellet-Cladding  & 0 & 0  & 39 of 39 \\
+Half-disks of Hertz & 0 & 0  & 30 of 30 \\
+membrane (2-D)      & 12 & \textbf{27} & 0 of 39 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent On two of three datasets the two initializations produce \emph{the same cone at
+every cardinality}, because the largest-magnitude snapshot already lies in the
+largest-angle pair. Where they differ, the CPG-style start wins more often. Offline cost is
+unaffected: the choice moves \emph{which} snapshots are selected, never how many solves it
+takes. The pair initialization is therefore not earning its departure from the papers on
+this evidence.
+
+\subsection{Cross-implementation agreement}
+CPG's two independent transcriptions agree on \textbf{36 of 36} comparisons. mCPG's do
+not: of 18 comparisons, 7 are exactly equivalent, 1 agrees within solver tolerance, 9
+produce a \emph{different cone of the same accuracy}, and 1 is genuinely divergent. This
+is a finding about \ndee{} Algorithm 2 line 9, whose constrained shift is
+under-specified --- the two implementations resolve it with different solvers, and the
+resulting cones differ.
+
+\subsection{Conditioning}
+Median Gram condition number (column-normalized):
+Pellet-Cladding CPG $9.4\!\times\!10^{6}$, mCPG $1.1\!\times\!10^{7}$, ADG
+$8.2\!\times\!10^{4}$; membrane CPG $104$, mCPG $98$, ADG $103$. On Half-disks every
+method exceeds $1/\varepsilon_{\mathrm{mach}}=4.5\!\times\!10^{15}$ from $R\approx17$
+onward: the basis is numerically singular there and the reported value beyond that point
+is round-off, not a measurement. Figures shade that region rather than let it set the axis.
+
+\section{Caveats}
+
+\begin{enumerate}
+\item \textbf{No dataset currently drives a reduced solve.} The two 1-D obstacle toys were
+the only sources shipping $A$, $B(\mu)$, $f$ and $g$; with them removed, the inf-sup
+family and the solved-error metric report nothing on the three retained datasets. Both
+remain implemented and generic, and their tests build such a problem themselves.
+\item \textbf{The orthant's cost is mCPG's ordering run,} not the cone assembly, which is
+free. Tracking mCPG is what buys the comparability; the price is that the cost column
+measures the tracking.
+\item \textbf{Extent above 1 is not an error.} It means the cone is wider than $\Kfull$,
+which requires leaving it. mCPG and the orthant both do.
+\item \textbf{The full-cone reference in the solved-error table is not a lower bound.} The
+reduced solve minimizes over the cone rather than projecting onto it, so a smaller cone can
+land closer.
+\item \textbf{Half-disks conditioning is meaningless past $R\approx17$}, as above.
+\item \textbf{Membrane errors are large in absolute terms} ($\approx0.6$) for every
+method: 125 snapshots on 497 dual dofs with a moving contact patch is simply not
+compressible to $R\le40$. Comparisons there remain valid; the absolute level is a property
+of the dataset.
+\end{enumerate}
+
+\section*{Reproduction}
+\begin{verbatim}
+python -m bench.runner --datasets fem_lambda physics membrane_2d \
+       --subsample 200 --out results
+python -m bench.runner --datasets fem_lambda physics membrane_2d --deltas \
+       --cardinalities $(seq 1 40) --no-infsup --no-determinism \
+       --subsample 200 --out results/sweep_dense
+python -m bench.report  --results results --out results/report.txt
+python -m bench.figures --results results/sweep_dense --out results/figures --split
+\end{verbatim}
+\noindent Main grid 174/210 cells in 919\,s; dense sweep 817/840 cells in 1848\,s;
+145 tests passing.
+
+\end{document}
