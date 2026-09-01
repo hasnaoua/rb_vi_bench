@@ -6,6 +6,8 @@
 \usepackage{enumitem}
 \usepackage[table]{xcolor}
 \usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
 \usepackage{titlesec}
 \titleformat{\section}{\large\bfseries}{\thesection}{0.7em}{}
 \titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.7em}{}
@@ -23,6 +25,8 @@
 algorithms, metrics, and measured results}
 \author{Benchmark report}
 \date{\today}
+
+\graphicspath{{figs/}}
 
 \begin{document}
 \maketitle
@@ -184,6 +188,15 @@ snapshot magnitudes spread. Train and test are reported separately.
 \textbf{Non-negativity} is checked on the reconstruction:
 $\texttt{nn\_max\_violation}=\max(0,-\min_i \hat\lambda_i)$.
 
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{precision_overview.png}
+\caption{Test projection error against cardinality, all three datasets. Compressibility
+differs by orders of magnitude: Half-disks and Pellet-Cladding fall steeply, membrane
+barely moves --- 125 snapshots on 497 dual dofs with a moving contact patch is simply not
+compressible to $R\le40$, which is a property of the problem and not of any method.}
+\end{figure}
+
 \subsection{Performance (offline cost)}
 Wall-clock is machine-dependent, so the primary cost is a \emph{count of constrained
 solver calls} --- NNLS, \texttt{lsq\_linear} and \texttt{minimize} --- captured by
@@ -191,6 +204,15 @@ instrumenting the solvers during a fit. One caveat governs its reading: it count
 \emph{constrained} solves only, so NMF records exactly $0$, meaning ``issues none'', not
 ``is free''. ADG likewise records $0$ at $R=1,2$, because it seeds from a Gram-matrix
 argmin and NNLS first appears at $R=3$.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.72\textwidth]{offline_cost_physics.png}
+\caption{Offline cost on 3D Pellet-Cladding. CPG grows about twice as fast as ADG in
+constrained solves; mCPG plateaus once its residual stops finding new directions; NMF sits
+on the zero line throughout, which means it issues no \emph{constrained} solves, not that
+it is free.}
+\end{figure}
 
 \subsection{Stability}
 \begin{itemize}
@@ -246,6 +268,16 @@ covered-sphere fraction is identically zero.
 Values above $1$ are meaningful: the cone is wider than $\Kfull$, which requires leaving
 it. Scale-invariance ($\spanp\{c\xi\}=\spanp\{\xi\}$) means generator normalization cannot
 affect it.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{cone_geometry_halfdisks.png}
+\caption{The five cone-geometry panels on Half-disks of Hertz. Read the two residual
+panels together: CPG and ADG sit flat at zero in \emph{excess} because a cone spanned by
+snapshots cannot leave $\Kfull$, while mCPG lifts to $0.26$. Extent and aperture
+disagree by design --- aperture has mCPG rising smoothly while extent shows what the
+enclosed region actually does.}
+\end{figure}
 
 \subsubsection*{Aperture (conditioning, \emph{not} extent)}
 Mean pairwise angle between normalized generators. Retained as a conditioning diagnostic
@@ -380,6 +412,13 @@ construction, as they must be: their generators \emph{are} snapshots. The extent
 confirms this independently --- mCPG's cone is $5.7\times$ to $16.4\times$ wider than
 everything the snapshots generate, which is only possible by leaving $\Kfull$.
 
+\subsection{ADG is the best conditioned of the greedy methods}
+Away from the rank cliff, ADG's angular selection buys conditioning: on Pellet-Cladding it
+is $45\times$ better conditioned than CPG at $R=5$ and $125\times$ at $R=20$. See
+\S\ref{sec:cond} for the full study, which also shows that the \emph{rate} of
+conditioning loss is set by the dataset (varying tenfold across the three) far more than by
+the method (well under twofold within any one).
+
 \subsection{ADG's pair initialization: mostly irrelevant, and never decisive}
 Comparing base ADG against \texttt{adg\_k0} (CPG's first step) at matched $R$:
 
@@ -395,6 +434,14 @@ membrane (2-D)      & 12 & \textbf{27} & 0 of 39 \\
 \end{tabular}
 \end{center}
 
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.88\textwidth]{adg_init_membrane.png}
+\caption{The initialization ablation on membrane --- the one dataset of the three where
+the two arms differ at all. Every panel is the same algorithm apart from the first
+generator. On the other two datasets the curves coincide exactly at every cardinality.}
+\end{figure}
+
 \noindent On two of three datasets the two initializations produce \emph{the same cone at
 every cardinality}, because the largest-magnitude snapshot already lies in the
 largest-angle pair. Where they differ, the CPG-style start wins more often. Offline cost is
@@ -402,7 +449,7 @@ unaffected: the choice moves \emph{which} snapshots are selected, never how many
 takes. The pair initialization is therefore not earning its departure from the papers on
 this evidence.
 
-\subsection{Cross-implementation agreement}
+\subsection{Agreement between the duplicate transcriptions}
 CPG's two independent transcriptions agree on \textbf{36 of 36} comparisons. mCPG's do
 not: of 18 comparisons, 7 are exactly equivalent, 1 agrees within solver tolerance, 9
 produce a \emph{different cone of the same accuracy}, and 1 is genuinely divergent. This
@@ -410,13 +457,144 @@ is a finding about \ndee{} Algorithm 2 line 9, whose constrained shift is
 under-specified --- the two implementations resolve it with different solvers, and the
 resulting cones differ.
 
-\subsection{Conditioning}
-Median Gram condition number (column-normalized):
-Pellet-Cladding CPG $9.4\!\times\!10^{6}$, mCPG $1.1\!\times\!10^{7}$, ADG
-$8.2\!\times\!10^{4}$; membrane CPG $104$, mCPG $98$, ADG $103$. On Half-disks every
-method exceeds $1/\varepsilon_{\mathrm{mach}}=4.5\!\times\!10^{15}$ from $R\approx17$
-onward: the basis is numerically singular there and the reported value beyond that point
-is round-off, not a measurement. Figures shade that region rather than let it set the axis.
+\section{Conditioning: a closer study}\label{sec:cond}
+
+Conditioning deserves its own treatment because it is the quantity that decides whether a
+cone of a given cardinality is \emph{usable}, independently of how accurate it is. The
+reduced solve inverts $\hat A$ and forms $\hat B\hat A^{-1}\hat B^{\!\top}$; recovering
+the coefficients $c$ from a cone projection is an NNLS problem on $\Xi$. Both inherit
+$\kappa(\hat\Xi^{\!\top}\hat\Xi)$. A cone that reaches a smaller projection error at a
+condition number of $10^{17}$ has not necessarily bought anything.
+
+\subsection{What is measured, and on which convention}
+$\kappa$ is computed on \textbf{column-normalized} generators, and the choice is not
+cosmetic. \bee{}'s CPG keeps raw selected snapshots; \ndee{}'s mCPG normalizes. Measured
+on raw generators the number would partly report snapshot magnitude spread rather than
+cone geometry, and the two families would not be comparable. Both are recorded; their
+ratio shows how much the convention was worth:
+
+\begin{center}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+dataset & method & $\kappa$ (normalized) & $\kappa$ (raw) & raw/norm \\
+\midrule
+3D Pellet-Cladding & CPG  & $9.38\times10^{6}$ & $2.42\times10^{6}$ & 0.26 \\
+                   & mCPG & $1.12\times10^{7}$ & $1.12\times10^{7}$ & \textbf{1.000} \\
+                   & ADG  & $8.15\times10^{4}$ & $1.29\times10^{6}$ & 15.8 \\
+\midrule
+Half-disks of Hertz & CPG  & $1.38\times10^{17}$ & $5.67\times10^{16}$ & 0.41 \\
+                    & mCPG & $1.41\times10^{5}$  & $1.41\times10^{5}$  & \textbf{1.000} \\
+\midrule
+membrane (2-D) & CPG & $104$ & $96.8$ & 0.93 \\
+               & mCPG & $98.1$ & $98.1$ & \textbf{1.000} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent mCPG's ratio is exactly $1.000$ on all three datasets, which is the convention
+confirming itself: its generators are already unit vectors, so normalizing is the identity
+for it. For ADG on Pellet-Cladding the two differ by $15.8\times$ --- had the raw number
+been reported, ADG's conditioning advantage there would have been hidden entirely.
+
+\subsection{Growth is geometric in $R$, at a rate set by the dataset}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{conditioning_growth.png}
+\caption{$\kappa$ against cardinality. Note the log axis --- this is the one panel in the
+benchmark that uses one, because $\kappa\ge1$ by definition so the zero-dropping failure
+of a log scale cannot occur, and the quantity spans eleven decades. The orthant sits at
+exactly $1$ at every $R$: its generators are mutually orthogonal, so it is the
+best-conditioned admissible cone there is, and it bounds every curve from below.}
+\end{figure}
+
+\noindent On a log axis the curves are close to straight over most of their range, i.e.
+$\kappa$ grows geometrically with each added generator --- with one important exception,
+Half-disks, taken up in \S\ref{sec:cliff}. Fitting $\log_{10}\kappa$ against $R$ over the
+non-singular range gives the rate in \emph{decades gained per generator}:
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+dataset & CPG & mCPG & ADG & NMF \\
+\midrule
+3D Pellet-Cladding  & 0.180 & 0.157 & 0.222 & \textbf{0.051} \\
+Half-disks of Hertz & 0.572 & 0.705 & 0.586 & 0.608 \\
+membrane (2-D)      & 0.063 & 0.057 & 0.071 & \textbf{0.027} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The rate is a property of the \emph{dataset} far more than of the method: it
+varies by a factor of ten across datasets and by well under two across methods on any one
+of them. NMF is consistently the gentlest, which is what one expects from atoms that are
+optimized rather than selected --- it is free to place a generator where it improves
+conditioning, whereas a greedy must take a snapshot that exists.
+
+\subsection{The collapse is the snapshot spectrum, not the algorithm}\label{sec:cliff}
+
+The Half-disks rates above are misleading taken alone, and the figure shows why: that
+dataset does not decay geometrically at all. It is flat to $R\approx15$ and then falls off
+a cliff, with every method collapsing together within two cardinalities of each other
+($R=17$ for CPG and ADG, $18$ for NMF, $19$ for mCPG). A single fitted slope averages
+across that cliff and describes neither side of it.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{spectra.png}
+\caption{Normalized singular values of the training snapshots. The Half-disks spectrum
+drops from $\sigma_{14}=2.1\times10^{-4}$ to $\sigma_{15}=6.0\times10^{-7}$ to
+$\sigma_{16}=2.1\times10^{-8}$ --- three decades in two indices. That cliff is at exactly
+the cardinality where every method's conditioning explodes.}
+\end{figure}
+
+\noindent The explanation is the numerical rank of the snapshot set:
+
+\begin{center}
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+dataset & $\dim\times n_{\mathrm{train}}$ & $\sigma_2/\sigma_1$ & rank$_{10^{-8}}$ & conditioning behaviour \\
+\midrule
+Half-disks of Hertz & $57\times31$   & 0.026 & 17 of 31  & flat, then a cliff at $R\!\approx\!16$ \\
+3D Pellet-Cladding  & $7676\times47$ & 0.057 & 41 of 47  & smooth staircase, never singular \\
+membrane (2-D)      & $497\times100$ & 0.380 & 100 of 100 & gentle, $\kappa<10^{4}$ throughout \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Once $R$ exceeds the numerical rank, any further generator is a numerically
+dependent combination of those already selected, and no selection rule can avoid it: the
+information is not in the data. This is the single most useful conditioning result in the
+benchmark, because it is \emph{predictive} --- the spectrum is computable before any
+method runs, and it says where the usable range ends. On Half-disks that is
+$R\approx15$, and reporting a Half-disks result at $R=30$ is reporting round-off.
+
+\subsection{Conditioning and aperture measure the same thing from two sides}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{conditioning_rate.png}
+\caption{Left: growth rate per method and dataset. Right: $\kappa$ against mean pairwise
+angle, pooled over methods and cardinalities.}
+\end{figure}
+
+\noindent The correlation between $\log_{10}\kappa$ and mean pairwise angle is
+$-0.70$, $-0.59$ and $-0.81$ on the three datasets: wider cones are better conditioned,
+consistently and strongly. This is why aperture is retained as a \emph{conditioning}
+diagnostic in \S3.4 and explicitly not as a measure of extent --- it tracks $\kappa$,
+which is what \ndee{}~\S4 is after when it asks for a well-conditioned Gram matrix, and it
+does \emph{not} track how much space the cone encloses.
+
+\subsection{Which method to prefer, on conditioning grounds}
+Where the datasets can discriminate at all --- that is, away from the rank cliff --- ADG
+is markedly the best conditioned of the three greedy methods. On Pellet-Cladding at $R=5$
+it reaches $\kappa=2.2\times10^{2}$ against CPG's $9.8\times10^{3}$, a factor of
+$45$; by $R=20$ the gap is $7.1\times10^{4}$ against $8.9\times10^{6}$, a factor of $125$.
+This is the expected consequence of its selection rule: choosing by \emph{angular} defect
+rather than residual magnitude is, almost by definition, choosing generators that are far
+from the span of those already held. On Half-disks the cliff dominates and no method is
+distinguishable; on membrane every method sits near $10^{2}$ and the differences do not
+matter.
 
 \section{Caveats}
 
@@ -433,7 +611,11 @@ which requires leaving it. mCPG and the orthant both do.
 \item \textbf{The full-cone reference in the solved-error table is not a lower bound.} The
 reduced solve minimizes over the cone rather than projecting onto it, so a smaller cone can
 land closer.
-\item \textbf{Half-disks conditioning is meaningless past $R\approx17$}, as above.
+\item \textbf{Half-disks results are meaningless past $R\approx15$}, and this is a
+statement about the data rather than the methods: the snapshot spectrum has numerical
+rank 17 of 31, so beyond that every generator is a numerically dependent combination of
+those already held (\S\ref{sec:cond}). The usable range is predictable from the spectrum
+before any method is run.
 \item \textbf{Membrane errors are large in absolute terms} ($\approx0.6$) for every
 method: 125 snapshots on 497 dual dofs with a moving contact patch is simply not
 compressible to $R\le40$. Comparisons there remain valid; the absolute level is a property
