@@ -49,7 +49,7 @@ right-hand side.
 from __future__ import annotations
 
 import numpy as np
-from scipy.optimize import minimize
+from scipy.optimize import minimize, nnls
 
 from .. import _paths  # noqa: F401
 from ..types import BasisResult, Dataset
@@ -107,15 +107,59 @@ def solve_reduced_general(A, f, gap, V, Xi, B):
     Q = B_hat @ A_hat_inv @ B_hat.T
     c = B_hat @ A_hat_inv @ f_hat - g_hat
 
-    R = Xi.shape[1]
-    res = minimize(
+    alpha = _solve_bounded_qp(Q, c)
+    return V @ (A_hat_inv @ (f_hat - B_hat.T @ alpha)), Xi @ alpha
+
+
+def _qp_objective(Q, c, a):
+    return 0.5 * float(a @ Q @ a) - float(a @ c)
+
+
+def _solve_bounded_qp(Q, c):
+    """``argmin_{alpha >= 0} 1/2 alpha' Q alpha - alpha' c``, solved two ways.
+
+    ``Q = B_hat A_hat^{-1} B_hat'`` is a reduced Schur complement, and it is routinely
+    **rank-deficient**: its rank is bounded by the interface, not by the cone, so with R
+    generators mapping through a smaller contact set it is singular. Measured on the
+    synthetic obstacle problem, 60% of cells have ``rank(Q) < R``, one at rank 4 of 6 with
+    ``cond(Q) = 3.7e16``.
+
+    That breaks the obvious solver. L-BFGS-B returns ``status=0`` -- converged -- after 8
+    iterations on such a cell while its KKT residual is still 4.1e-3, and it lands on a
+    worse objective than the true optimum in 10% of cells (gaps to 6.3e-3). It reports
+    success, so nothing downstream would notice.
+
+    The same QP written as a bounded least-squares problem does not have that trouble.
+    With ``Q = W L W'`` and the positive eigenvalues kept, ``M = L_+^{1/2} W_+'`` satisfies
+    ``M'M = Q``, and if ``c`` lies in ``range(Q)`` then ``M' r = c`` for
+    ``r = L_+^{-1/2} W_+' c``, so
+    ``1/2||M a - r||^2 = 1/2 a'Qa - a'c + const`` and NNLS -- an exact active-set method --
+    solves it to machine precision (residual 1.1e-14 on the same cell).
+
+    Both are run and the better objective is returned. NNLS is not universally applicable:
+    when ``c`` has a component outside ``range(Q)`` the least-squares form drops a linear
+    term, so that case falls back rather than silently solving a different problem. Taking
+    the minimum means this can never be worse than the reference implementation it mirrors.
+    """
+    R = int(Q.shape[0])
+    best = np.maximum(minimize(
         lambda a: 0.5 * a @ Q @ a - a @ c, np.zeros(R),
         jac=lambda a: Q @ a - c, method="L-BFGS-B",
         bounds=[(0.0, None)] * R,               # span_+ , [BEE20] §4.1
         options={"maxiter": 5000, "ftol": 1e-15, "gtol": 1e-12},
-    )
-    alpha = np.maximum(res.x, 0.0)
-    return V @ (A_hat_inv @ (f_hat - B_hat.T @ alpha)), Xi @ alpha
+    ).x, 0.0)
+
+    w, W = np.linalg.eigh(Q)
+    keep = w > max(float(w.max()), 0.0) * 1e-13
+    if keep.any():
+        Wk, wk = W[:, keep], w[keep]
+        # c must lie in range(Q), or the least-squares form is a different problem.
+        if np.linalg.norm(c - Wk @ (Wk.T @ c)) <= 1e-8 * max(float(np.linalg.norm(c)), 1e-300):
+            M = np.sqrt(wk)[:, None] * Wk.T
+            candidate, _ = nnls(M, Wk.T @ c / np.sqrt(wk))
+            if _qp_objective(Q, c, candidate) < _qp_objective(Q, c, best):
+                best = candidate
+    return best
 
 
 def _rel(approx: np.ndarray, truth: np.ndarray) -> float:

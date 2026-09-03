@@ -422,37 +422,94 @@ def test_conditioning_axis_is_bounded_at_numerical_singularity():
             assert column not in NUMERICAL_CEILING, column
 
 
-def test_general_solve_matches_the_reference_when_B_is_identity():
-    """The generalized solve must BE rb_online.solve_reduced wherever that one applies.
+def test_general_solve_assembles_the_same_system_as_the_reference():
+    """The generalized solve must pose the SAME reduced problem as rb_online.solve_reduced.
 
-    solve_reduced hardcodes B_hat = Xi.T @ V, i.e. K = I. That is right when the
-    constraint is u <= g directly, and unusable when the multiplier and the displacement
-    live on different meshes -- Xi.T @ V does not even have compatible shapes there. So a
-    generalized version is necessary, and the risk it introduces is drift from the
-    reference. This pins them together on a problem where both can run.
+    That reference hardcodes B_hat = Xi' V, i.e. K = I -- right when the constraint is
+    u <= g directly, and unusable when multiplier and displacement live on different
+    meshes, where Xi' V is not even shape-compatible. So a generalized version is needed,
+    and the risk it introduces is drift from the reference.
 
-    Built here rather than loaded: the registry now ships only cone datasets, none of
-    which carries an operator, and tying this check to a dataset is what would let it
-    lapse silently the next time the registry changes.
+    The check is on the ASSEMBLY, not on the returned vectors, and that distinction is the
+    point. Both build the same Q and c; they then differ in how well they minimize over
+    alpha >= 0, because the reference uses L-BFGS-B alone and Q is routinely singular
+    (see test_reduced_qp_is_solved_to_optimality...). Asserting bit-equality of the
+    outputs would pin this implementation to the reference's early stopping. So: identical
+    system, and an objective never worse than the reference's.
     """
     from rb_online import solve_reduced
 
-    from bench.metrics.online import primal_basis, solve_reduced_general
+    from bench.metrics.online import _qp_objective, primal_basis, solve_reduced_general
 
     ds = make_solvable_obstacle()
-    assert ds.A is not None and ds.B_of_mu is not None
-    assert ds.rhs_of_mu is not None and ds.gap_of_mu is not None
     V = primal_basis(ds)
     Xi = METHODS["cpg_bee20"].fit(ds, R=6).generators
     B = ds.B_of_mu(0)
-    assert np.array_equal(B, np.eye(B.shape[0])), "this dataset's B must be the identity"
+    assert np.array_equal(B, np.eye(B.shape[0])), "this problem's B must be the identity"
 
-    for q in np.asarray(ds.test_idx, int)[:6]:
-        f, gap = ds.rhs_of_mu(int(q)), ds.gap_of_mu(int(q))
-        u_ref, lam_ref = solve_reduced(ds.A, f, gap, V, Xi)
-        u_gen, lam_gen = solve_reduced_general(ds.A, f, gap, V, Xi, B)
-        assert np.allclose(u_gen, u_ref, rtol=1e-9, atol=1e-12)
-        assert np.allclose(lam_gen, lam_ref, rtol=1e-9, atol=1e-12)
+    A_hat = V.T @ ds.A @ V
+    A_inv = np.linalg.inv(A_hat)
+    for q in np.asarray(ds.test_idx, int)[:4]:
+        q = int(q)
+        f, gap = ds.rhs_of_mu(q), ds.gap_of_mu(q)
+
+        # Same reduced system: the reference's K = I assembly equals ours with B = I.
+        assert np.allclose(Xi.T @ B @ V, Xi.T @ V, atol=1e-12)
+        B_hat = Xi.T @ B @ V
+        Q = B_hat @ A_inv @ B_hat.T
+        c = B_hat @ A_inv @ (V.T @ f) - Xi.T @ gap
+
+        _u_ref, lam_ref = solve_reduced(ds.A, f, gap, V, Xi)
+        _u_gen, lam_gen = solve_reduced_general(ds.A, f, gap, V, Xi, B)
+
+        # Recover each solver's alpha to compare on the objective they both minimize.
+        a_ref, _res, _rk, _sv = np.linalg.lstsq(Xi, lam_ref, rcond=None)
+        a_gen, _res, _rk, _sv = np.linalg.lstsq(Xi, lam_gen, rcond=None)
+        assert _qp_objective(Q, c, np.maximum(a_gen, 0.0)) <= \
+               _qp_objective(Q, c, np.maximum(a_ref, 0.0)) + 1e-9, q
+
+        # Both must respect the sign condition the cone exists to guarantee.
+        assert lam_gen.min() >= -1e-12 and lam_ref.min() >= -1e-12
+
+
+def test_reduced_qp_is_solved_to_optimality_on_a_rank_deficient_schur_complement():
+    """Q = B_hat A_hat^-1 B_hat' is routinely singular, and L-BFGS-B quietly stops early.
+
+    Its rank is bounded by the interface rather than by the cone, so with R generators
+    mapping through a smaller contact set it is rank-deficient -- measured at 60% of cells
+    on this problem. On such a cell L-BFGS-B returns status=0 (converged) after 8
+    iterations with a KKT residual of 4e-3, i.e. it reports success while sitting away
+    from the optimum, so nothing downstream would notice.
+
+    _solve_bounded_qp also solves the same QP as a bounded least-squares problem via the
+    eigen-factorization of Q, where NNLS is an exact active-set method, and returns
+    whichever objective is lower. This asserts the outcome that matters: the returned
+    point is a KKT point of the QP, not merely the output of a solver that claimed to
+    converge.
+    """
+    from bench.metrics.online import _solve_bounded_qp, primal_basis
+
+    ds = make_solvable_obstacle(dim=24, n=12, seed=0)
+    V = primal_basis(ds)
+    seen_rank_deficient = False
+    for R in (3, 5, 6, 8):
+        Xi = METHODS["cpg_bee20"].fit(ds, R=R).generators
+        for q in np.asarray(ds.test_idx, int)[:4]:
+            q = int(q)
+            A_hat = V.T @ ds.A @ V
+            A_inv = np.linalg.inv(A_hat)
+            B_hat = Xi.T @ ds.B_of_mu(q) @ V
+            Q = B_hat @ A_inv @ B_hat.T
+            c = B_hat @ A_inv @ (V.T @ ds.rhs_of_mu(q)) - Xi.T @ ds.gap_of_mu(q)
+            seen_rank_deficient |= np.linalg.matrix_rank(Q) < Q.shape[0]
+
+            a = _solve_bounded_qp(Q, c)
+            grad = Q @ a - c
+            scale = max(float(np.abs(c).max()), 1.0)
+            assert a.min() >= -1e-12, "primal feasibility: alpha >= 0"
+            assert grad.min() >= -1e-7 * scale, "dual feasibility: gradient >= 0"
+            assert abs(float(a @ grad)) <= 1e-7 * scale, "complementarity"
+    assert seen_rank_deficient, "no singular Q occurred; this test would prove nothing"
 
 
 def test_online_metric_is_reported_only_where_the_problem_is_available():

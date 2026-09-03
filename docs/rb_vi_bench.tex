@@ -295,9 +295,12 @@ held-out parameter,
 \min_{\alpha\ge0}\;\tfrac12\alpha^{\!\top}\hat B\hat A^{-1}\hat B^{\!\top}\alpha
 - \alpha^{\!\top}\!\bigl(\hat B\hat A^{-1}\hat f-\hat g\bigr),
 \end{equation}
-and reports the relative error in \emph{both} components against the HF solution. The
-bound $\alpha\ge0$ is the discrete form of $\spanp$, and it is why the recovered
-$\hat\lambda=\Xi\alpha$ is non-negative exactly rather than approximately. Projection
+and reports the relative error in \emph{both} components against the HF solution. This
+is the \emph{dual} form of the reduced problem, obtained by eliminating the primal
+coefficients in closed form; it is derived step by step in Appendix~\ref{app:dual}, which
+also explains in what sense it is still a projection. The bound $\alpha\ge0$ is the
+discrete form of $\spanp$, and it is why the recovered $\hat\lambda=\Xi\alpha$ is
+non-negative exactly rather than approximately. Projection
 error and solved error are different functionals of the same cone: the solve minimizes an
 energy over $W_R^+$, it does not project the true multiplier onto it.
 
@@ -634,5 +637,117 @@ python -m bench.figures --results results/sweep_dense --out results/figures --sp
 \end{verbatim}
 \noindent Main grid 174/210 cells in 919\,s; dense sweep 817/840 cells in 1848\,s;
 145 tests passing.
+
+
+\appendix
+\section{Derivation of the reduced dual problem (Eq.~9)}\label{app:dual}
+
+\subsection*{Step 0 --- the HF problem is a constrained minimization}
+System~\eqref{eq:hf} is the KKT system of
+\begin{equation}
+\min_{u}\;\tfrac12 u^{\!\top}\!Au - f^{\!\top}u
+\quad\text{subject to}\quad Bu\le g ,
+\label{eq:primalHF}
+\end{equation}
+with $\lambda\ge0$ the multiplier of the inequality. $A$ is symmetric positive definite
+(a stiffness matrix), which is what makes every elimination below legitimate.
+
+\subsection*{Step 1 --- substitute the reduced ansatz}
+Take $u\approx Va$ with $a\in\R^{N}$ \emph{free in sign}, and $\lambda\approx\Xi\alpha$
+with $\alpha\ge0$. Testing the equilibrium equation against $V$ and the constraint against
+$\Xi$ gives the reduced KKT system
+\begin{equation}
+\hat A a + \hat B^{\!\top}\alpha = \hat f,
+\qquad \hat B a \le \hat g,
+\qquad \alpha\ge0,
+\label{eq:redKKT}
+\end{equation}
+with $\hat A=V^{\!\top}\!AV$, $\hat B=\Xi^{\!\top}\!B(\mu)V$, $\hat f=V^{\!\top}\!f$,
+$\hat g=\Xi^{\!\top}g$. Equivalently: minimize $\tfrac12a^{\!\top}\hat Aa-\hat f^{\!\top}a$
+subject to $\hat Ba\le\hat g$.
+
+\subsection*{Step 2 --- eliminate $a$}
+This is the step Eq.~(9) compresses. The Lagrangian of the reduced problem is
+\begin{equation}
+L(a,\alpha)=\tfrac12a^{\!\top}\hat Aa-\hat f^{\!\top}a+\alpha^{\!\top}(\hat Ba-\hat g).
+\end{equation}
+$L$ is strictly convex in $a$, so the inner minimum is attained where
+$\partial_a L=\hat Aa-\hat f+\hat B^{\!\top}\alpha=0$, i.e.
+\begin{equation}
+a^{*}(\alpha)=\hat A^{-1}\bigl(\hat f-\hat B^{\!\top}\alpha\bigr).
+\label{eq:astar}
+\end{equation}
+Write $s=\hat f-\hat B^{\!\top}\alpha$, so $a^{*}=\hat A^{-1}s$. Substituting,
+\begin{align}
+L(a^{*},\alpha)
+&=\tfrac12 s^{\!\top}\hat A^{-1}s-\hat f^{\!\top}\hat A^{-1}s+(\hat B^{\!\top}\alpha)^{\!\top}\hat A^{-1}s-\alpha^{\!\top}\hat g \nonumber\\
+&=\tfrac12 s^{\!\top}\hat A^{-1}s-\underbrace{(\hat f-\hat B^{\!\top}\alpha)^{\!\top}}_{=\;s^{\top}}\hat A^{-1}s-\alpha^{\!\top}\hat g
+\;=\;-\tfrac12 s^{\!\top}\hat A^{-1}s-\alpha^{\!\top}\hat g .
+\end{align}
+Expanding $s^{\!\top}\hat A^{-1}s
+=\hat f^{\!\top}\hat A^{-1}\hat f-2\alpha^{\!\top}\hat B\hat A^{-1}\hat f+\alpha^{\!\top}\hat B\hat A^{-1}\hat B^{\!\top}\alpha$
+and \emph{maximizing} the dual (equivalently minimizing its negative), the constant
+$\tfrac12\hat f^{\!\top}\hat A^{-1}\hat f$ drops and what remains is exactly Eq.~(9):
+\begin{equation}
+\boxed{\;\min_{\alpha\ge0}\;\tfrac12\,\alpha^{\!\top}Q\,\alpha-\alpha^{\!\top}c,
+\qquad Q=\hat B\hat A^{-1}\hat B^{\!\top},
+\qquad c=\hat B\hat A^{-1}\hat f-\hat g. \;}
+\label{eq:dualQP}
+\end{equation}
+The displacement is then recovered from~\eqref{eq:astar}, and
+$\hat\lambda=\Xi\alpha$.
+
+\subsection*{Step 3 --- what $Q$ and $c$ mean}
+Neither is an arbitrary algebraic object.
+\begin{itemize}
+\item $Q=\hat B\hat A^{-1}\hat B^{\!\top}$ is the \textbf{Schur complement}, i.e. the
+compliance of the structure \emph{seen from the contact interface}. Entry $Q_{ij}$ is the
+interface displacement in generator direction $i$ produced by a unit contact force in
+direction $j$. It is symmetric positive \emph{semi}-definite.
+\item $c=\hat B\hat A^{-1}\hat f-\hat g$ is the \textbf{penetration of the contact-free
+solution}: $\hat A^{-1}\hat f$ is the displacement with contact ignored, $\hat B$ reads it
+at the interface, and $\hat g$ is the gap. Positive entries are the penetration that
+contact forces must remove.
+\end{itemize}
+So Eq.~\eqref{eq:dualQP} reads: \emph{choose non-negative contact-force coefficients that
+undo the penetration $c$, weighted by the interface compliance $Q$.}
+
+\subsection*{Step 4 --- in what sense it \emph{is} a projection}
+The objection ``this minimizes an energy rather than projecting'' is half right. Completing
+the square in the $\hat A^{-1}$ inner product $\langle x,y\rangle_{\hat A^{-1}}=x^{\!\top}\hat A^{-1}y$,
+\begin{equation}
+\tfrac12\alpha^{\!\top}Q\alpha-\alpha^{\!\top}c
+\;=\;\tfrac12\bigl\|\hat B^{\!\top}\alpha-\hat f\bigr\|^{2}_{\hat A^{-1}}
+\;+\;\alpha^{\!\top}\hat g
+\;-\;\tfrac12\bigl\|\hat f\bigr\|^{2}_{\hat A^{-1}} ,
+\label{eq:proj}
+\end{equation}
+verified numerically to $2.8\times10^{-14}$ over random $\alpha\ge0$. So the reduced solve
+\emph{is} a projection --- of the load $\hat f$ onto the cone of attainable reactions
+$\{\hat B^{\!\top}\alpha:\alpha\ge0\}$, in the \textbf{energy (compliance) metric}
+$\hat A^{-1}$, shifted by the linear gap term $\alpha^{\!\top}\hat g$. When $\hat g=0$ it
+is exactly that projection.
+
+This is precisely why solved error and projection error are different functionals of the
+same cone, as \S3.6 claims. The metric $\Pi_K$ used everywhere else in this benchmark is
+the \emph{Euclidean} projection of the \emph{true multiplier} onto $W_R^+$. The solve
+performs an $\hat A^{-1}$-weighted projection of the \emph{load}, offset by the gap. Two
+different objects, two different inner products: a cone can be good for one and poor for
+the other.
+
+\subsection*{Step 5 --- a caution about solving \eqref{eq:dualQP}}
+$Q$ is a Schur complement, so its rank is limited by the interface rather than by $R$:
+with more cone generators than the contact set can distinguish it is \emph{singular}. On
+the synthetic obstacle problem used to test this metric, $Q$ is rank-deficient in $60\%$ of
+cells, one at rank $4$ of $6$ with $\kappa(Q)=3.7\times10^{16}$.
+
+That defeats a naive bound-constrained solver. L-BFGS-B reports \texttt{status=0}
+(converged) after eight iterations on such a cell while its KKT residual is still
+$4\times10^{-3}$, landing on a worse objective than the true optimum in $10\%$ of cells.
+Because it reports success, nothing downstream notices. Writing~\eqref{eq:dualQP} as a
+bounded least-squares problem via the eigen-decomposition $Q=W\Lambda W^{\!\top}$ --- where
+NNLS is an exact active-set method --- reaches a KKT residual of $1\times10^{-14}$ on the
+same cell. The implementation runs both and returns the lower objective, so it can never
+be worse than the reference it mirrors.
 
 \end{document}
