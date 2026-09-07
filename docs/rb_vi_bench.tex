@@ -682,6 +682,55 @@ benchmark, because it is \emph{predictive} --- the spectrum is computable before
 method runs, and it says where the usable range ends. On Half-disks that is
 $R\approx15$, and reporting a Half-disks result at $R=30$ is reporting round-off.
 
+\subsection{Conditioning against ADG's own stopping criterion}\label{sec:theta-kappa}
+
+\S\ref{sec:cliff} located the cliff in $R$, which requires already knowing the numerical
+rank. ADG does not need that: at every round it computes
+$\theta_{\max}=\max_{q\ \mathrm{unresolved}}\theta_{K}(x_q)$, the worst remaining angular
+defect, and compares $\sin\theta_{\max}$ against its tolerance to decide whether to keep
+going (\S2.3). This is the quantity the algorithm itself watches, so plotting $\kappa$
+against $\theta_{\max}$ instead of against $R$ asks a more operational question: not
+``how many components in,'' but ``how converged does ADG itself believe it is.''
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.82\textwidth]{theta_vs_kappa.png}
+\caption{Gram condition number of ADG's own cone, against ADG's own angular-defect
+criterion $\theta_{\max}$, one curve per dataset, $x$-axis tightening left to right. Each
+marker is one round of \texttt{compute\_phases()}, restricted to the cardinalities also
+present in the matched-cardinality sweep (up to $R=40$) so $\kappa$ is read from the same
+grid as every other figure. The dotted line is the same numerical-singularity threshold
+$1/\varepsilon_{\mathrm{mach}}$ used throughout.}
+\end{figure}
+
+\noindent Three things follow that were not visible against $R$:
+
+\begin{itemize}
+\item \textbf{The Half-disks cliff is a cliff in $\theta_{\max}$, not merely in $R$.}
+$\kappa$ is flat and modest ($10^{3}$--$10^{6}$) for every $\theta_{\max}\gtrsim2^{\circ}$,
+then rises twelve orders of magnitude while $\theta_{\max}$ moves from about
+$2^{\circ}$ to $0.5^{\circ}$ --- less than a factor of four in the criterion itself. The
+few points above the singular line wobble rather than climb monotonically; those are
+round-off on an already-singular Gram matrix (\S\ref{sec:cliff}), not a second effect.
+\item \textbf{Pellet-Cladding has no such threshold.} Its curve is smooth and monotonic
+across nearly five decades of $\theta_{\max}$ (from $24^{\circ}$ down to
+$7\times10^{-4\circ}$) without ever crossing the singular line in the sweep's range ---
+consistent with its numerical rank (41 of 47) never being exhausted at $R\le40$.
+\item \textbf{Membrane occupies only the loose end of the axis.} Within $R\le40$ its
+$\theta_{\max}$ has fallen only from $62^{\circ}$ to $26^{\circ}$ --- it has barely begun
+to converge by ADG's own criterion, which is the same conclusion \S\ref{sec:precost}
+reached from the error curve (membrane is simply not compressible to $R\le40$), now
+visible directly in the algorithm's internal state rather than inferred from its output.
+\end{itemize}
+
+\noindent The practical reading: on Half-disks and Pellet-Cladding, $\theta_{\max}$
+dropping below roughly one degree is where conditioning risk stops being hypothetical,
+regardless of what $R$ that happens to correspond to on a given dataset. Because
+$\theta_{\max}$ is computed anyway, on every round, watching it costs nothing extra and
+needs no advance knowledge of the snapshot spectrum --- unlike the rank criterion in
+\S\ref{sec:cliff}, which has to be computed once up front and does not update as the
+greedy proceeds.
+
 \subsection{Conditioning and aperture measure the same thing from two sides}
 
 \begin{figure}[htbp]
