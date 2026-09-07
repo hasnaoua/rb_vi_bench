@@ -41,6 +41,16 @@ STYLE: dict[str, dict] = {
     # than as a missing series.
     "adg_k0":      dict(color="#7d3c98", marker="s", ls="--",
                         label=r"ADG (CPG init, $K_0=\{0\}$)"),
+    # The gamma family, on one sequential ramp so the sweep reads as an ordering rather
+    # than as five unrelated methods: gamma=0 is CPG's rule and gamma=1 is ADG's, and the
+    # colour going light-to-dark says which way along that axis a curve sits.
+    "adg_g0":      dict(color="#a6cee3", marker="o", ls="-",
+                        label=r"$\gamma$=0 (= CPG)"),
+    "adg_g25":     dict(color="#6baed6", marker="o", ls="-",  label=r"$\gamma$=0.25"),
+    "adg_g50":     dict(color="#3182bd", marker="o", ls="-",  label=r"$\gamma$=0.5"),
+    "adg_g75":     dict(color="#08519c", marker="o", ls="-",  label=r"$\gamma$=0.75"),
+    "adg_g100":    dict(color="#08306b", marker="o", ls="-",
+                        label=r"$\gamma$=1 (= ADG rule)"),
     "nmf_s0":      dict(color="#c0392b", marker="v", ls="-",  label="NMF (seed 0)"),
     "nmf_s1":      dict(color="#d98880", marker="v", ls=":",  label="NMF (seed 1)"),
     "nmf_s2":      dict(color="#e6b0aa", marker="v", ls=":",  label="NMF (seed 2)"),

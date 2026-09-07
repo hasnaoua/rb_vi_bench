@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from ..types import BasisResult
-from . import baselines, family_a, family_b
+from . import baselines, family_a, family_b, weighted
 
 
 @dataclass(frozen=True)
@@ -114,6 +114,66 @@ METHODS: dict[str, Method] = {
                          "UNNORMALIZED snapshots, normalized and handed to the same loop "
                          "-- rather than the largest-mutual-angle pair. Any difference "
                          "from `adg` is attributable to the first step alone"),
+        ),
+        Method(
+            key="adg_g0",
+            label=r"$\gamma$=0 (= CPG)",
+            fit=weighted.FITTERS["adg_g0"],
+            family="weighted",
+            paper_tag="",
+            description=("norm-weighted residual greedy at gamma=0/100: "
+                         "argmax ||theta - Pi(theta)|| / ||theta||^gamma. gamma=0 is "
+                         "CPG's rule exactly, gamma=1 is ADG's selection rule (i.e. "
+                         "adg_k0's); intermediate values trade absolute accuracy for "
+                         "conditioning continuously"),
+        ),
+        Method(
+            key="adg_g25",
+            label=r"$\gamma$=0.25",
+            fit=weighted.FITTERS["adg_g25"],
+            family="weighted",
+            paper_tag="",
+            description=("norm-weighted residual greedy at gamma=25/100: "
+                         "argmax ||theta - Pi(theta)|| / ||theta||^gamma. gamma=0 is "
+                         "CPG's rule exactly, gamma=1 is ADG's selection rule (i.e. "
+                         "adg_k0's); intermediate values trade absolute accuracy for "
+                         "conditioning continuously"),
+        ),
+        Method(
+            key="adg_g50",
+            label=r"$\gamma$=0.5",
+            fit=weighted.FITTERS["adg_g50"],
+            family="weighted",
+            paper_tag="",
+            description=("norm-weighted residual greedy at gamma=50/100: "
+                         "argmax ||theta - Pi(theta)|| / ||theta||^gamma. gamma=0 is "
+                         "CPG's rule exactly, gamma=1 is ADG's selection rule (i.e. "
+                         "adg_k0's); intermediate values trade absolute accuracy for "
+                         "conditioning continuously"),
+        ),
+        Method(
+            key="adg_g75",
+            label=r"$\gamma$=0.75",
+            fit=weighted.FITTERS["adg_g75"],
+            family="weighted",
+            paper_tag="",
+            description=("norm-weighted residual greedy at gamma=75/100: "
+                         "argmax ||theta - Pi(theta)|| / ||theta||^gamma. gamma=0 is "
+                         "CPG's rule exactly, gamma=1 is ADG's selection rule (i.e. "
+                         "adg_k0's); intermediate values trade absolute accuracy for "
+                         "conditioning continuously"),
+        ),
+        Method(
+            key="adg_g100",
+            label=r"$\gamma$=1 (= ADG rule)",
+            fit=weighted.FITTERS["adg_g100"],
+            family="weighted",
+            paper_tag="",
+            description=("norm-weighted residual greedy at gamma=100/100: "
+                         "argmax ||theta - Pi(theta)|| / ||theta||^gamma. gamma=0 is "
+                         "CPG's rule exactly, gamma=1 is ADG's selection rule (i.e. "
+                         "adg_k0's); intermediate values trade absolute accuracy for "
+                         "conditioning continuously"),
         ),
         Method(
             key="nmf_s0",

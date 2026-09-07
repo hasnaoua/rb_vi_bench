@@ -212,6 +212,92 @@ def test_adg_initializes_with_the_widest_angle_pair(bumps):
     assert model.selected_indices[:2] == list(model.initial_pair)
 
 
+def test_weighted_greedy_endpoints_reproduce_CPG_and_ADGs_rule():
+    """gamma=0 must BE CPG and gamma=1 must be ADG's selection rule, not merely resemble.
+
+    The whole point of the family is that it interpolates two rules already in the
+    benchmark, so if the endpoints drifted the intermediate values would interpolate
+    between something else. gamma=0 gives weight 1, i.e. CPG's absolute-residual argmax,
+    and must match CPG selection for selection, in order. gamma=1 gives
+    ||theta - Pi(theta)|| / ||theta||, which is sin of the angular defect ADG maximizes;
+    it matches adg_k0 -- ADG with the pair seeding removed -- because stock ADG also
+    seeds from a pair and admits tied candidates in batches, neither of which this rule
+    does.
+    """
+    for key in ("fem_lambda", "physics", "membrane_2d"):
+        ds = ds_mod.load(key)
+        R = 8
+        assert (METHODS["adg_g0"].fit(ds, R=R).selected_indices
+                == METHODS["cpg_bee20"].fit(ds, R=R).selected_indices), key
+        assert (sorted(METHODS["adg_g100"].fit(ds, R=R).selected_indices)
+                == sorted(METHODS["adg_k0"].fit(ds, R=R).selected_indices)), key
+
+
+def test_weighted_greedy_first_step_is_not_decided_by_round_off():
+    """At gamma=1 the weighted rule ties across the whole training set; Eq. (56) breaks it.
+
+    With K_0 = {0} the projection is zero, so the score is ||theta||^(1-gamma): at
+    gamma=1 that is exactly 1 for every candidate. On 3D Pellet-Cladding the 47 scores
+    computed naively take five distinct float values spanning 0.9999999999999997 to
+    1.0000000000000002, and a plain argmax lands on whichever one round-off favours --
+    snapshot 18, for no defensible reason. Every gamma must therefore start from the same
+    generator, the largest-norm snapshot, which is what the rule itself gives for every
+    gamma < 1.
+    """
+    ds = ds_mod.load("physics")
+    expected = int(np.argmax(np.linalg.norm(ds.train(), axis=0)))
+    for key in ("adg_g0", "adg_g25", "adg_g50", "adg_g75", "adg_g100"):
+        first = METHODS[key].fit(ds, R=1)
+        assert first.selected_indices == [expected], (key, first.selected_indices)
+
+
+def test_weighted_greedy_is_hierarchical_and_stays_inside_K_full():
+    """Generators are selected snapshots, so both properties hold by construction.
+
+    They are asserted anyway because they are what makes the family a drop-in for CPG:
+    a non-nested variant could not be read on the matched-cardinality axis at all, and
+    one whose generators left K_full would need the excess column to be interpreted
+    differently from CPG's.
+    """
+    ds = ds_mod.load("physics")
+    train = ds.train()
+    for key in ("adg_g25", "adg_g50", "adg_g75"):
+        full = METHODS[key].fit(ds, R=10)
+        for k in range(1, full.R + 1):
+            part = METHODS[key].fit(ds, R=k)
+            assert part.selected_indices == full.selected_indices[:k], (key, k)
+        # Every generator IS a training snapshot, hence in K_full.
+        for j, idx in enumerate(full.selected_indices):
+            assert np.allclose(full.generators[:, j], train[:, idx]), (key, j)
+
+
+def test_weighted_greedy_issues_exactly_one_solve_per_live_candidate():
+    """sum_{r=1}^{R-1} (n - r) constrained solves, independent of gamma.
+
+    The exact count matters more than a comparison here. The gamma family is O(nR) like
+    CPG -- one cone projection per unselected candidate per step -- but this
+    implementation is measurably CHEAPER than the vendored CPG (2.5x to 3.3x on
+    fem_lambda), because it skips candidates already selected, whose residual is zero and
+    which therefore cannot win the argmax, and because its first generator comes from
+    Eq. (56) in closed form with no projection at all. The vendored CPG issues
+    (2R-1)*n.
+
+    So the offline-cost column is NOT comparable between adg_g0 and cpg_bee20 even though
+    they select identically: the difference is implementation, not rule. Pinning the
+    exact formula is what keeps that distinction legible instead of looking like the
+    weighted rule being cheaper than the rule it reproduces.
+    """
+    ds = ds_mod.load("fem_lambda")
+    n = ds.train().shape[1]
+    for R in (4, 8, 16):
+        expected = sum(n - r for r in range(1, R))
+        for key in ("adg_g0", "adg_g50", "adg_g100"):
+            got = METHODS[key].fit(ds, R=R).solver_calls.get("nnls", 0)
+            assert got == expected, (key, R, got, expected)
+        # Never more than the rule it generalizes.
+        assert expected <= METHODS["cpg_bee20"].fit(ds, R=R).solver_calls.get("nnls", 0)
+
+
 def test_adg_k0_starts_from_the_empty_cone_at_the_largest_norm_snapshot():
     """The ablation of the pair initialization: K_0 = {0}, i.e. CPG's own first step.
 
@@ -747,7 +833,10 @@ def test_registry_is_self_consistent():
     """Registry keys must match the labels the adapters actually return."""
     for key, method in METHODS.items():
         assert method.key == key
-        assert method.family in ("rb_vi_common", "greedy.core", "baseline")
+        # "weighted" is the norm-weighted residual family: neither vendored source, but
+        # a rule defined here that interpolates two that are (CPG at gamma=0, ADG's
+        # selection at gamma=1).
+        assert method.family in ("rb_vi_common", "greedy.core", "baseline", "weighted")
     for a, b in CROSS_FAMILY_PAIRS:
         assert a in METHODS and b in METHODS
         assert METHODS[a].family != METHODS[b].family, (
