@@ -28,6 +28,7 @@ import numpy as np
 from .. import _paths  # noqa: F401  -- sys.path side effect
 from ..instrument import count_solver_calls, summarize
 from ..types import BasisResult, Dataset
+from ._common import require_delta as _require_delta
 
 from rb_vi_common.cone_greedy import cone_projected_greedy, cpg, mcpg
 
@@ -36,18 +37,6 @@ from rb_vi_common.cone_greedy import cone_projected_greedy, cpg, mcpg
 # stopping rule must not fire at all -- ``max_R`` is what stops the loop -- so the
 # tolerance is set below any achievable residual rather than to zero.
 _EXHAUSTIVE_TOL = 1e-14
-
-
-def _require_delta(delta: float | None) -> float:
-    """``delta`` is mandatory whenever ``R`` is not given -- say so once.
-
-    Every adapter takes exactly one of the two knobs, and the runner always supplies
-    one. Stated here rather than at six call sites, and as a named error rather than
-    the ``TypeError`` that ``float(None)`` would raise three frames deeper.
-    """
-    if delta is None:
-        raise ValueError("pass delta= when R= is not given")
-    return float(delta)
 
 
 def _run(fn, snapshots, tol, max_R, mass=None):

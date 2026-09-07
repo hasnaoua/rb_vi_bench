@@ -18,10 +18,22 @@ from collections import defaultdict
 from pathlib import Path
 
 
+#: What to tell a user whose grid CSV is not there. One string, because it names a
+#: command: ``__main__`` exposes the runner as ``python -m bench run``, and a second copy
+#: of this hint elsewhere would keep naming whatever form was current when it was written.
+MISSING_GRID_HINT = "not found; run `python -m bench run` first"
+
+
 def read_rows(path: Path) -> list[dict]:
-    """Every row of a grid CSV, unparsed."""
+    """Every row of a grid CSV, unparsed.
+
+    Raises ``FileNotFoundError`` rather than returning empty: an absent grid and a grid
+    of zero usable rows need different messages, and only the caller knows whether a
+    missing file is fatal (``figures``, ``report``) or merely one of several optional
+    inputs (``decrement``, which takes two grids and skips whichever is absent).
+    """
     if not path.is_file():
-        raise FileNotFoundError(f"{path} not found; run `python -m bench.runner` first")
+        raise FileNotFoundError(f"{path} {MISSING_GRID_HINT}")
     with path.open() as fh:
         return list(csv.DictReader(fh))
 

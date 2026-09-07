@@ -213,6 +213,10 @@ def main(argv=None) -> int:
 
     written = []
 
+    # Both grids are OPTIONAL here, unlike in figures/report where a missing grid is
+    # fatal: this command draws two independent axes and either can stand alone. So the
+    # absent case is a printed skip rather than an exit -- a different decision from the
+    # same fact, deliberately, not a third inconsistent one.
     card = args.cardinality_results / "grid.csv"
     if card.is_file():
         for dataset, by_method in rows_by_dataset_and_method(card, "cardinality").items():

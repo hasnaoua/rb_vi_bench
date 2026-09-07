@@ -54,6 +54,23 @@ def _ranking(dataset, result, columns) -> tuple[np.ndarray, np.ndarray]:
     return rel, approx
 
 
+def _best_worst(dataset, result, columns):
+    """``(rel, approx, best, worst)`` for one fitted cone, or ``None`` if unrankable.
+
+    The all-nan guard is the load-bearing part and is why this exists as a function.
+    ``_ranking`` divides by each snapshot's own norm and writes nan wherever that norm is
+    numerically zero, so a set of columns that are *all* zero-norm yields an all-nan
+    ranking -- and ``np.nanargmin`` raises ``ValueError`` on that, rather than returning
+    anything a caller could check. Three builders needed the same guard before the same
+    two calls; returning ``None`` makes it impossible to reach the argmins without having
+    handled the empty case.
+    """
+    rel, approx = _ranking(dataset, result, columns)
+    if np.all(np.isnan(rel)):
+        return None
+    return rel, approx, int(np.nanargmin(rel)), int(np.nanargmax(rel))
+
+
 def _geom(dataset):
     """The dataset's field geometry, defaulting to an index-ordered curve."""
     return getattr(dataset, "geometry", None) or geometry.line_geometry()
@@ -169,16 +186,17 @@ def figures_for_method(dataset, name, method_key, result, columns, out_dir) -> l
     different things (a snapshot here, a cardinality there) and interleaving them in one
     dataset folder made the directory hard to read.
     """
-    rel, approx = _ranking(dataset, result, columns)
-    if np.all(np.isnan(rel)):
+    ranked = _best_worst(dataset, result, columns)
+    if ranked is None:
         return []
+    rel, approx, best, worst = ranked
     color = style_for(method_key)["color"]
     geom = _geom(dataset)
     x = geom.coords if geom.coords is not None else np.arange(columns.shape[0])
     method_dir = layout.ensure(layout.method_dir(out_dir, name, method_key))
 
     written: list[Path] = []
-    for label, idx in (("best", int(np.nanargmin(rel))), ("worst", int(np.nanargmax(rel)))):
+    for label, idx in (("best", best), ("worst", worst)):
         head = (f"{name} — {METHODS[method_key].label} (R={result.R})\n"
                 f"{label}: snapshot {idx}, rel. err {rel[idx]:.3e}")
         if geom.is_field:
@@ -218,10 +236,10 @@ def _figure_for_dataset_field(dataset, name, fitted, columns, out_dir, geom) -> 
     keys = list(fitted)
     errs: dict[str, tuple[int, int, np.ndarray, np.ndarray]] = {}
     for key in keys:
-        rel, approx = _ranking(dataset, fitted[key], columns)
-        if np.all(np.isnan(rel)):
+        ranked = _best_worst(dataset, fitted[key], columns)
+        if ranked is None:
             continue
-        b, w = int(np.nanargmin(rel)), int(np.nanargmax(rel))
+        _rel, approx, b, w = ranked
         errs[key] = (b, w,
                      geometry.relative_error_field(columns[:, b], approx[:, b]),
                      geometry.relative_error_field(columns[:, w], approx[:, w]))
@@ -268,13 +286,13 @@ def figure_for_dataset(dataset, name, fitted, columns, out_dir) -> Path | None:
     x = geom.coords if geom.coords is not None else np.arange(columns.shape[0])
     for row, key in enumerate(keys):
         result = fitted[key]
-        rel, approx = _ranking(dataset, result, columns)
+        ranked = _best_worst(dataset, result, columns)
         color = style_for(key)["color"]
-        if np.all(np.isnan(rel)):
+        if ranked is None:
             for ax in axes[row]:
                 ax.axis("off")
             continue
-        best, worst = int(np.nanargmin(rel)), int(np.nanargmax(rel))
+        rel, approx, best, worst = ranked
         for ax, idx, label in ((axes[row][0], best, "best"), (axes[row][1], worst, "worst")):
             _draw(ax, x, columns[:, idx], approx[:, idx],
                   f"{METHODS[key].label} — {label}: #{idx}, {rel[idx]:.2e}", color, geom)
@@ -315,6 +333,16 @@ def main(argv=None) -> int:
         columns = dataset.test()
         if columns is None:
             columns = dataset.train()
+
+        # The reference methods are excluded by default -- their reconstructions are not
+        # comparable to the cone methods' -- but an exclusion that overrides an EXPLICIT
+        # --methods request has to say so. Silently returning "0 figures" makes "we chose
+        # not to draw this" indistinguishable from "this failed", which is the confusion
+        # runner.py records a skip_reason to avoid.
+        excluded = [k for k in args.methods if k in FIGURE_EXCLUDED]
+        for m in excluded:
+            print(f"[skip] {key}/{m}: reference method, excluded from reconstruction "
+                  f"figures (it is in plotting.FIGURE_EXCLUDED)")
 
         fitted = {}
         for m in [k for k in args.methods if k not in FIGURE_EXCLUDED]:

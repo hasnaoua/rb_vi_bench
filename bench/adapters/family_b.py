@@ -30,6 +30,7 @@ import numpy as np
 from .. import _paths  # noqa: F401  -- sys.path side effect
 from ..instrument import count_solver_calls, summarize
 from ..types import BasisResult, Dataset
+from ._common import require_delta as _require_delta
 
 from greedy.core.angle_defect_greedy import AngularDefectGreedy
 from greedy.core.cpg import CPG
@@ -44,13 +45,6 @@ from greedy.pipelines.component_sweep import (
 # adapters keep each class's own default rather than imposing one, since the value
 # interacts with each algorithm's zero tests.
 _ZERO_TOL = {"cpg": 0.0, "mcpg": 1e-12, "adg": 1e-14}
-
-
-def _require_delta(delta: float | None) -> float:
-    """See ``family_a._require_delta`` -- ``delta`` is mandatory without ``R``."""
-    if delta is None:
-        raise ValueError("pass delta= when R= is not given")
-    return float(delta)
 
 
 def _fit_to_tolerance(cls, dataset, delta, **kwargs):

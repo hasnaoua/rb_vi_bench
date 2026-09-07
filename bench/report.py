@@ -32,10 +32,29 @@ def _table(title: str, headers: list[str], rows: list[list[str]], note: str = ""
     return "\n".join(out) + "\n"
 
 
-def tolerance_table(rows: list[dict], dataset: str, delta: float) -> str:
+def _select(rows: list[dict], dataset: str, mode: str, key: str, value: float,
+            *, require: str | None = None) -> list[dict]:
+    """The cells one table draws from: one dataset, one mode, one setting, never skipped.
+
+    Every table opened with this predicate written out longhand. The shared half is the
+    part that must not drift: a skipped cell admitted into a results table is exactly the
+    confusion this module's docstring exists to prevent -- "not measured here" and
+    "scored badly here" reading the same. Stated once, it can only be got wrong once.
+
+    ``require`` names a column the row must actually carry a number in, which is how the
+    two optional tables (inf-sup, solved error) exclude datasets that cannot supply their
+    inputs rather than printing a table of dashes.
+    """
     sel = [r for r in rows
-           if r.get("dataset") == dataset and r.get("mode") == "tolerance"
-           and not r.get("skip_reason") and _num(r, "delta") == delta]
+           if r.get("dataset") == dataset and r.get("mode") == mode
+           and not r.get("skip_reason") and _num(r, key) == value]
+    if require is not None:
+        sel = [r for r in sel if not math.isnan(_num(r, require))]
+    return sel
+
+
+def tolerance_table(rows: list[dict], dataset: str, delta: float) -> str:
+    sel = _select(rows, dataset, "tolerance", "delta", delta)
     body = [[
         r["method_label"], r["paper_tag"],
         _fmt(_num(r, "R"), ".0f"),
@@ -58,9 +77,7 @@ def tolerance_table(rows: list[dict], dataset: str, delta: float) -> str:
 
 
 def cardinality_table(rows: list[dict], dataset: str, R: int) -> str:
-    sel = [r for r in rows
-           if r.get("dataset") == dataset and r.get("mode") == "cardinality"
-           and not r.get("skip_reason") and _num(r, "R_requested") == R]
+    sel = _select(rows, dataset, "cardinality", "R_requested", R)
     body = [[
         r["method_label"], r["paper_tag"],
         _fmt(_num(r, "train_max_rel_err")),
@@ -83,10 +100,8 @@ def cardinality_table(rows: list[dict], dataset: str, R: int) -> str:
 
 def online_table(rows: list[dict], dataset: str, R: int) -> str:
     """Solved error of the reduced saddle-point problem, at matched cardinality."""
-    sel = [r for r in rows
-           if r.get("dataset") == dataset and r.get("mode") == "cardinality"
-           and not r.get("skip_reason") and _num(r, "R_requested") == R
-           and not math.isnan(_num(r, "online_primal_mean_rel"))]
+    sel = _select(rows, dataset, "cardinality", "R_requested", R,
+                  require="online_primal_mean_rel")
     if not sel:
         return ""
     body = [[
@@ -116,10 +131,8 @@ def online_table(rows: list[dict], dataset: str, R: int) -> str:
 
 
 def infsup_table(rows: list[dict], dataset: str, delta: float) -> str:
-    sel = [r for r in rows
-           if r.get("dataset") == dataset and r.get("mode") == "tolerance"
-           and not r.get("skip_reason") and _num(r, "delta") == delta
-           and not math.isnan(_num(r, "beta_dec_min"))]
+    sel = _select(rows, dataset, "tolerance", "delta", delta,
+                  require="beta_dec_min")
     if not sel:
         return ""
     body = [[
