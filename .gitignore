@@ -4,8 +4,14 @@ __pycache__/
 .pytest_cache/
 
 # Generated output. Every artefact under results/ is reproducible from `python -m bench`;
-# nothing in it is an input to anything else.
-results/
+# nothing in it is an input to anything else -- except results/code/, which is the one
+# carve-out: small standalone scripts that regenerate a specific report figure by
+# re-deriving something no CSV column captures (e.g. ADG's per-round angular-defect
+# history, which the greedy discards once compute_phases() returns). Those are source,
+# not output, and get tracked; everything else under results/ stays generated-only.
+results/*
+!results/code/
+!results/code/**
 
 # Raw inputs: large, and fetched or unpacked rather than versioned -- the same policy each
 # vendored repo applies to its own data/. README.md is the exception, and documents the
