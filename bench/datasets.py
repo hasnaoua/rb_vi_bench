@@ -26,11 +26,16 @@ Where a source *is* a recognised physical problem, the name says so -- ``fem_lam
 [BEE20] §6.2's Hertz half-disks and ``physics`` is the 3-D pellet-cladding contact --
 because a reader of a figure should see the problem, not the file it came from.
 
-**Tiers.** ``fast`` sources need only numpy/scipy and are the default grid. ``heavy``
-is ``membrane_2d`` alone, opt-in for a dependency reason rather than a runtime one: it
-imports ``cvxopt`` at module scope, which is ``greedy_algos``' optional ``[qp]`` extra,
-so the default grid stays runnable on a bare install. Its build cost is modest (roughly
-30s). Install with::
+**Tiers.** ``fast`` sources need only numpy/scipy; ``heavy`` is ``membrane_2d`` alone,
+which imports ``cvxopt`` (``greedy_algos``' optional ``[qp]`` extra) when it is built.
+Its build cost is modest (roughly 30s).
+
+Every command now defaults to **both** tiers, i.e. all three datasets. The tier is a
+statement about dependencies, not about what to run: with the registry narrowed to three,
+defaulting to ``fast`` meant a bare ``python -m bench run`` silently covered two of them.
+A bare install without ``cvxopt`` still does not crash -- the runner catches the build
+failure and records it as a ``skip_reason`` row, which is what this benchmark does with
+every other cell it cannot run. Install with::
 
     pip install cvxopt        # or: pip install -e repos/greedy_algos[qp]
 

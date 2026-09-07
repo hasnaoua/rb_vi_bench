@@ -175,7 +175,12 @@ def run_agreement(dataset: Dataset, *, delta: float) -> list[dict]:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="run the rb_vi_bench grid")
-    cli.add_datasets(p, list(ds_mod.FAST))
+    # All three, not just FAST. The registry now holds exactly the three datasets
+    # under study, and a bare install missing cvxopt does not crash on membrane_2d:
+    # the build failure is caught below and recorded as a skip_reason row, which is
+    # this project's convention anyway. Defaulting to FAST silently ran two thirds
+    # of the benchmark. ``reconstruct`` already defaulted to both tiers.
+    cli.add_datasets(p, list(ds_mod.FAST) + list(ds_mod.HEAVY))
     cli.add_methods(p, list(DEFAULT_METHODS), known=sorted(METHODS))
     p.add_argument("--deltas", nargs="*", type=float, default=list(DEFAULT_DELTAS))
     p.add_argument("--cardinalities", nargs="*", type=int, default=list(DEFAULT_CARDINALITIES))

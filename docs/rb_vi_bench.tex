@@ -823,13 +823,17 @@ the method.
 
 \section*{Reproduction}
 \begin{verbatim}
-python -m bench.runner --datasets fem_lambda physics membrane_2d \
+# --datasets defaults to all three; listed here to make the scope explicit.
+python -m bench run --datasets fem_lambda physics membrane_2d \
        --subsample 200 --out results
-python -m bench.runner --datasets fem_lambda physics membrane_2d --deltas \
+python -m bench run --datasets fem_lambda physics membrane_2d --deltas \
        --cardinalities $(seq 1 40) --no-infsup --no-determinism \
        --subsample 200 --out results/sweep_dense
-python -m bench.report  --results results --out results/report.txt
-python -m bench.figures --results results/sweep_dense --out results/figures --split
+python -m bench report   --results results --out results/report.txt
+python -m bench figures  --results results/sweep_dense --out results/figures --separate
+python -m bench decrement --cardinality-results results/sweep_dense \
+       --tolerance-results results --out results/figures
+python -m bench reconstruct --R 8 --separate --out results/figures
 \end{verbatim}
 \noindent Main grid 174/210 cells in 919\,s; dense sweep 817/840 cells in 1848\,s;
 146 tests passing.

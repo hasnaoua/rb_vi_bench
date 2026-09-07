@@ -43,14 +43,12 @@ def test_half_disk_is_drawn_as_the_full_symmetric_contact_line():
         assert np.allclose(full, full[::-1]), "must be symmetric about the plane"
         # Zeros on BOTH sides, contact in the middle -- the paper's layout.
         assert full[0] < 1e-6 * full.max() and full[-1] < 1e-6 * full.max()
+        # The centre node carries half its tributary weight, so it sits at roughly half
+        # the peak. That is the half-support effect of the symmetry plane, not a defect.
+        # (A pressure-normalized view of this dataset would put the centre at the peak
+        # instead; it was removed with the rest of the narrowing to three datasets.)
         centre = full[full.size // 2]
-        if key == "fem_lambda_pressure":
-            # Corrected, the centre carries essentially the peak value.
-            assert centre > 0.9 * full.max()
-        else:
-            # Uncorrected, the centre node carries half its tributary weight, so it sits
-            # at roughly half the peak. That is the half-support effect, not a defect.
-            assert 0.4 * full.max() < centre < 0.6 * full.max()
+        assert 0.4 * full.max() < centre < 0.6 * full.max()
 
 
 def test_axial_profile_matches_the_publication_reduction():

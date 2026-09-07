@@ -185,7 +185,7 @@ takes `--help` of its own. The longer form — `python -m bench.runner`,
 .venv/bin/python -m bench          # run  report  figures  reconstruct  decrement
 ```
 
-Run the default grid (fast-tier datasets, all methods, four tolerances and four
+Run the default grid (all three datasets, all methods, four tolerances and four
 cardinalities), then render it:
 
 ```bash
@@ -396,13 +396,16 @@ values (see `datasets.FEM_LAMBDA_ORDERING`):
 * **Seriation finds nothing better** — spectral (Fiedler) ordering scored `TV = 20.7`,
   worse by 2.7×, because the 43 near-zero tail nodes dominate the correlation.
 
-`fem_lambda_pressure` is the same data with that weighting undone (`p = λ/hᵢ`, i.e. node
-0 doubled up to a global constant). Both are carried because **the correction is not
-cosmetic**: cone methods are invariant to rescaling a *snapshot* but not a *coordinate*,
-so the two are genuinely different reduction problems. Measured at `δ = 0.02`, CPG and
-mCPG select identically on both, while **ADG does not** — consistent with ADG selecting
-on angle, which a coordinate rescaling rotates. A test asserts at least one method sees
-the difference, so the pair can never silently become redundant.
+A pressure-normalized view of the same data (`p = λ/hᵢ`, i.e. node 0 doubled up to a
+global constant) was carried as a second dataset until the registry was narrowed to
+three; it is **no longer shipped**. The property it demonstrated is not cosmetic and is
+still asserted: cone methods are invariant to rescaling a *snapshot* but not a
+*coordinate*, so the two views are genuinely different reduction problems. Measured at
+`δ = 0.02`, CPG and mCPG select identically on both while **ADG does not** — consistent
+with ADG selecting on angle, which a coordinate rescaling rotates.
+`test_coordinate_rescaling_can_change_the_reduction` now builds the rescaled view inline
+from `fem_lambda` rather than loading a second dataset, so the property outlived the
+dataset that used to witness it.
 
 The residual ±8% mesh grading is **not** corrected; that needs tributary lengths the
 archive does not carry.
