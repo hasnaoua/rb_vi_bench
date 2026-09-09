@@ -241,7 +241,9 @@ def _write_grid_figure(dataset: str, series, subset, out_dir: Path, panels, *,
     err_col, err_title = error_column(series)
     panels = list(panels)
     nrows = -(-len(panels) // 2)
-    fig, axes = plt.subplots(nrows, 2, figsize=(11.5, 3.75 * nrows))
+    # squeeze=False: nrows comes from the caller's panel list, and one or two panels
+    # would otherwise give a 1-D axes array on which axes[0, 0] raises IndexError.
+    fig, axes = plt.subplots(nrows, 2, figsize=(11.5, 3.75 * nrows), squeeze=False)
     drawn = 0
     for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), panels):
         if column == "test_max_rel_err":
@@ -286,7 +288,9 @@ def figure_cone_geometry(dataset: str, series, out_dir: Path) -> Path | None:
     # through zip() the moment CONE_PANELS outgrows it -- no error, and a figure that
     # still renders and still looks complete. The list has grown twice already.
     nrows = -(-len(CONE_PANELS) // 2)
-    fig, axes = plt.subplots(nrows, 2, figsize=(11.5, 4.0 * nrows))
+    # squeeze=False for the same reason as in ``_write_grid_figure``: nrows is derived
+    # from CONE_PANELS, so a list of two would give a 1-D axes array.
+    fig, axes = plt.subplots(nrows, 2, figsize=(11.5, 4.0 * nrows), squeeze=False)
     drawn = 0
     for ax, (column, ylabel, yscale, title) in zip(axes.ravel(), CONE_PANELS):
         drawn += _panel(ax, series, column, ylabel, yscale, title)

@@ -111,7 +111,7 @@ membership of $\Wp$, which is the property the method needs. It does \emph{not} 
 membership of $\Kfull$: a difference of two elements of $\spanp\{\theta\}$ need not lie
 in $\spanp\{\theta\}$. This is measured directly (\S\ref{sec:results}).
 
-\subsection{ADG --- Batch Normalized Angular-Defect Greedy}
+\subsection{ADG --- Batch Normalized Angular-Defect Greedy}\label{sec:adg}
 
 Not in either paper; contributed by the \texttt{greedy\_algos} source. Two departures
 from CPG:
@@ -153,6 +153,62 @@ by itself define ADG's first step: with the zero cone every defect is a right an
 candidates tie, and batch admission would take the entire training set at once ---
 Eq.~(56) is the tie-break the papers supply. A consequence of the pair start is that base
 ADG has \emph{no} $R=1$ state; its trajectory is $R=2,3,4,\dots$
+
+\subsection{Norm-weighted residual greedy (the $\gamma$ family)}\label{sec:gammadef}
+
+Not in either paper. The two subsections above differ in one respect they leave implicit:
+the \emph{scale} on which the residual is ranked. CPG ranks by absolute residual on the
+physical snapshots; ADG ranks by angular defect, which on $S_{\mathrm{norm}}$ is the
+residual of a unit vector. Both are members of one rule,
+\begin{equation}
+q_r \;\in\; \arg\max_q\;
+\frac{\bigl\|\theta_q-\Pi_{K_{r-1}}(\theta_q)\bigr\|}{\|\theta_q\|^{\gamma}},
+\qquad \gamma\in[0,1],
+\label{eq:gamma}
+\end{equation}
+with $\gamma=0$ recovering CPG's absolute criterion (\bee{}~Eq.~(56) and its loop) and
+$\gamma=1$ recovering the normalized one, since dividing by $\|\theta_q\|$ makes the
+numerator $\sin\theta_{K}(\theta_q)$. Weighting a residual by a power of the column norm
+is the standard device in the separable-NMF/successive-projection family, where
+column normalization is what makes the selection scale-free.
+
+\paragraph{The first step needs Eq.~(56) whenever $\gamma=1$.} With $K_0=\{0\}$ the
+projection vanishes, so the score in \eqref{eq:gamma} is $\|\theta_q\|^{1-\gamma}$: for
+$\gamma<1$ it is maximized at $\arg\max_q\|\theta_q\|$, which is exactly \bee{}~Eq.~(56),
+but at $\gamma=1$ it is identically $1$ and every candidate ties. This is the same
+degeneracy that forces ADG to seed from a pair (\S\ref{sec:adg} above), and it is not
+academic: on Pellet-Cladding the 47 first-step scores span
+$0.9999999999999997$ to $1.0000000000000002$, so an unguarded \texttt{argmax} selects on
+round-off. Eq.~(56) is therefore applied at $r=1$ for every $\gamma$, which changes
+nothing for $\gamma<1$ and makes $\gamma=1$ well posed.
+
+\paragraph{The endpoints are reproduced exactly.} At $R=12$ on all three datasets, the
+$\gamma=0$ selection is identical \emph{in order} to \texttt{cpg\_bee20}'s, and the
+$\gamma=1$ selection is identical in order to \texttt{adg\_k0}'s. The family is thus a
+genuine interpolation between two methods already in the benchmark, not a new method that
+resembles them.
+
+\paragraph{The knob is free.} The rule issues $\sum_{r=1}^{R-1}(n-r)$ cone projections
+regardless of $\gamma$ --- the weight reorders the candidates, it does not change how many
+are scored --- and \texttt{calls\_total} is measured identical across all five $\gamma$ at
+every $R$ on every dataset. Note this count is \emph{not} comparable with
+\texttt{cpg\_bee20}'s $(2R-1)n$: those are two transcriptions of the same rule with
+different loop structure, and \S\ref{sec:agree} is where transcriptions are compared.
+
+\paragraph{What the weight costs, in principle.} Let
+$\sigma=\max_q\|\theta_q\|/\min_q\|\theta_q\|$. Reweighting can promote a candidate whose
+absolute residual is smaller by at most a factor $\sigma^{\gamma}$, so the absolute
+residual attained by the $\gamma$-greedy is within $\sigma^{\gamma}$ of CPG's. The
+spreads are $\sigma=1.09$ on Half-disks, $186.85$ on Pellet-Cladding and $1.34$ on
+membrane, which predicts before any run that $\gamma$ can matter only on Pellet-Cladding.
+Two cautions on reading this bound: it constrains the \emph{training} residual the rule
+maximizes, not held-out error --- measured over the sweep it holds at 48 of 48 training
+cells and is violated once on test (membrane, $R=8$, $\gamma=0.25$: $1.0897$ against a
+predicted $1.0851$) --- and it is a worst case, not a prediction.
+
+\noindent Five members are benchmarked, \texttt{adg\_g0}, \texttt{adg\_g25},
+\texttt{adg\_g50}, \texttt{adg\_g75}, \texttt{adg\_g100}, at
+$\gamma\in\{0,0.25,0.5,0.75,1\}$.
 
 \subsection{Baselines}
 
@@ -517,7 +573,7 @@ unaffected: the choice moves \emph{which} snapshots are selected, never how many
 takes. The pair initialization is therefore not earning its departure from the papers on
 this evidence.
 
-\subsection{Agreement between the duplicate transcriptions}
+\subsection{Agreement between the duplicate transcriptions}\label{sec:agree}
 CPG's two independent transcriptions agree on \textbf{36 of 36} comparisons. mCPG's do
 not: of 18 comparisons, 7 are exactly equivalent, 1 agrees within solver tolerance, 9
 produce a \emph{different cone of the same accuracy}, and 1 is genuinely divergent. This
@@ -788,6 +844,269 @@ numerical rank of the training snapshots bounds every method identically and is
 computable before any of them runs, which is more actionable than knowing which greedy
 algorithm has a conditioning edge within that bound.
 
+\section{The $\gamma$ family: what the weighting buys}\label{sec:gamma}
+
+\S\ref{sec:gammadef} defines the interpolation \eqref{eq:gamma} between CPG's absolute
+criterion ($\gamma=0$) and the normalized one ($\gamma=1$), and establishes that both
+endpoints are reproduced exactly and that the offline cost is independent of $\gamma$.
+What remains is empirical: whether the intermediate members are worth using. The sweep is
+$\gamma\in\{0,0.25,0.5,0.75,1\}$ at $R=1,\dots,40$ on all three datasets.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{gamma_family_pellet.png}
+\caption{The whole family on 3D Pellet-Cladding. Precision and the two cone-residual
+panels show a clean monotone fan in $\gamma$: every member reaches the same floor, higher
+$\gamma$ simply reaches it later ($R\approx15$ at $\gamma=0$ against $R\approx25$ at
+$\gamma=1$), so the cost of the weight is a \emph{delay} rather than a worse asymptote.
+The offline-cost panel has all five curves exactly superimposed --- this is the panel that
+shows the knob is free. Conditioning is the one panel where the ordering is not monotone
+throughout: it inverts near $R\approx20$, discussed below.}
+\label{fig:gammafamily}
+\end{figure}
+
+\subsection{Only one dataset can respond to $\gamma$, and it is predictable in advance}
+
+The norm spread $\sigma=\max_q\|\theta_q\|/\min_q\|\theta_q\|$ is $1.086$ on Half-disks,
+$1.386$ on membrane and $186.85$ on Pellet-Cladding, and it bounds how far reweighting can
+move the selection. The prediction that only Pellet-Cladding can respond is confirmed, and
+on Half-disks it is confirmed in the strongest form: \textbf{below the numerical rank
+cliff ($R<17$, \S\ref{sec:cliff}) the four nonzero $\gamma$ give error and $\kappa$
+identical to CPG's at 13 of 15 cardinalities}, to every printed digit. The two exceptions
+are $R=12$ and $R=14$, where $\gamma\ge0.75$ selects differently: at $R=14$ it is $5.6\%$
+\emph{more} accurate ($0.0599$ against $0.0634$) and $3.2\times$ worse conditioned
+($1.54\times10^{8}$ against $4.79\times10^{7}$).
+
+This deserves emphasis because the aggregate statistics say something different and are
+misleading. Over the full $R=2\ldots31$ range the $\gamma$ members show a 90th-percentile
+conditioning gain of $\approx18\times$ and a maximum near $10^{3}\times$ on Half-disks.
+Every one of those gains falls at $R\ge17$, where the Gram matrix is numerically singular
+and $\kappa$ is round-off rather than a measurement --- the same trap Caveat~5 records for
+the main comparison. On Half-disks $\gamma$ buys nothing real.
+
+\subsection{The trade at a fixed cardinality}\label{sec:fixedR}
+
+Everything in this section is read at \emph{one} cardinality per dataset. Medians over
+$R$ were tried first and discarded, for exactly the reason Caveat~7 records for the main
+comparison: on Pellet-Cladding every member of the family reaches the error floor by
+$R\approx25$, so most cardinalities contribute an error tie and a $\kappa$ difference, and
+a median over the sweep is dominated by that converged tail. It does not merely blur the
+answer, it changes it --- the median favours $\gamma=0.75$, and at a fixed $R$ in the
+regime where the knob actually does something the answer is $\gamma=0.25$, as below.
+
+\paragraph{Choice of $R$, and why it is not free.} $R=20$ on Pellet-Cladding and membrane.
+On Pellet-Cladding this is also the smallest cardinality at which CPG is within $20\%$ of
+its own error floor, so it is where a user would plausibly stop. On Half-disks $R=20$ is
+inadmissible: the training snapshots have numerical rank 17, and CPG's $\kappa$ is already
+$1.6\times10^{9}$ at $R=15$ and $3.1\times10^{13}$ at $R=16$ (\S\ref{sec:cliff}). $R=12$
+is the last comfortably non-singular cardinality there ($\kappa=4.6\times10^{6}$), and is
+used instead. A single $R$ is a real restriction and \S\ref{sec:gammadirect} shows the
+same quantities across all $R$ so the choice can be audited.
+
+\paragraph{The exchange rate.} To say what a member costs per unit it buys, define at
+matched $R$
+\begin{equation}
+T(\gamma)\;=\;
+\frac{\log_{10}\bigl(E_{\gamma}/E_{\mathrm{CPG}}\bigr)}
+     {\log_{10}\bigl(\kappa_{\mathrm{CPG}}/\kappa_{\gamma}\bigr)},
+\label{eq:exchange}
+\end{equation}
+decades of accuracy lost per decade of conditioning gained. Lower is better; $T=1$ is an
+even trade. It is defined only when $\gamma$ actually bought conditioning \emph{and} cost
+accuracy; the other three outcomes --- \textbf{free} ($\kappa$ better, error not worse),
+$\kappa$ \textbf{unchanged}, and \textbf{adverse} ($\kappa$ worse) --- are reported as
+such rather than as a number.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{gamma_fixed_R.png}
+\caption{Top: $\kappa$ against absolute test error, one point per $\gamma$, at the fixed
+$R$ named in each title. Coincident members share one label. Bottom: the exchange rate
+\eqref{eq:exchange} where it is defined, and the regime otherwise. Half-disks is the null
+case: $\gamma\le0.5$ selects the same cone as CPG and $\gamma\ge0.75$ is strictly adverse.
+Pellet-Cladding shows a sharp corner at $\gamma=0.25$. Membrane shows no trade at all ---
+every member is free or neutral.}
+\label{fig:fixedR}
+\end{figure}
+
+\begin{center}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+dataset ($R$) & $\gamma$ & $E_{\mathrm{abs}}$ & $E/E_{\mathrm{CPG}}$
+& $\kappa_{\mathrm{CPG}}/\kappa_{\gamma}$ & $T$ \\
+\midrule
+Half-disks & $0$ (CPG) & $2.023\times10^{-2}$ & $1.000$ & $1.00$ & --- \\
+$R=12$     & $0.25$    & $2.023\times10^{-2}$ & $1.000$ & $1.00$ & no change \\
+           & $0.5$     & $2.023\times10^{-2}$ & $1.000$ & $1.00$ & no change \\
+           & $0.75$    & $2.023\times10^{-2}$ & $1.000$ & $0.40$ & adverse \\
+           & $1$       & $2.023\times10^{-2}$ & $1.000$ & $0.40$ & adverse \\
+\addlinespace
+Pellet-    & $0$ (CPG) & $1.490\times10^{7}$ & $1.000$ & $1.0$   & --- \\
+Cladding   & $0.25$    & $1.722\times10^{7}$ & $1.156$ & $63.8$  & $\mathbf{0.035}$ \\
+$R=20$     & $0.5$     & $3.276\times10^{7}$ & $2.198$ & $81.4$  & $0.179$ \\
+           & $0.75$    & $8.083\times10^{7}$ & $5.424$ & $115.6$ & $0.356$ \\
+           & $1$       & $8.083\times10^{7}$ & $5.424$ & $125.4$ & $0.350$ \\
+\addlinespace
+membrane   & $0$ (CPG) & $35.32$ & $1.000$ & $1.00$ & --- \\
+$R=20$     & $0.25$    & $33.65$ & $0.953$ & $1.32$ & free \\
+           & $0.5$     & $35.33$ & $1.000$ & $1.25$ & free \\
+           & $0.75$    & $35.33$ & $1.000$ & $1.25$ & free \\
+           & $1$       & $33.65$ & $0.953$ & $1.47$ & free \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{gamma_T.png}
+\caption{The exchange rate \eqref{eq:exchange} against $\gamma$, one curve per
+cardinality; the curve at the $R$ used in \S\ref{sec:fixedR} is drawn thick. $\gamma=0$
+is absent by construction --- it is CPG against itself, so both logarithms vanish --- and
+a point is plotted only where $T$ is a meaningful number, so gaps are cells that were
+free, $\kappa$-neutral or adverse rather than missing runs. Half-disks has no trade at any
+cardinality below its rank cliff. On Pellet-Cladding the $R=15$ curve sits \emph{above}
+the even-trade line for every $\gamma$ while $R=25$ sits an order of magnitude below it,
+so the same knob is poor value at one cardinality and excellent at another. Membrane has
+so few trades that three points are all the family produces at these $R$.}
+\label{fig:T}
+\end{figure}
+
+\noindent \textbf{Half-disks: $\gamma$ is inert, then harmful.} At $R=12$ all five members
+return the identical error, $\gamma\le0.5$ returns the identical $\kappa$, and
+$\gamma\ge0.75$ returns a $\kappa$ $2.5\times$ \emph{worse} for no accuracy in return.
+There is nothing to trade and no reason to leave $\gamma=0$.
+
+\noindent \textbf{Pellet-Cladding: the corner is at $\gamma=0.25$, sharply.} That member
+buys $63.8\times$ the conditioning for a $1.16\times$ error, an exchange rate of
+$T=0.035$ --- one decade of conditioning for three and a half percent of a decade of
+accuracy. Everything past it is a much worse deal: $\gamma=0.5$ roughly doubles the
+error for a further $1.3\times$ conditioning, and $\gamma=0.75$ costs $5.4\times$ the
+error --- the full $\sigma^{\gamma}$ penalty --- for $115.6\times$, only $1.8\times$ more
+conditioning than $\gamma=0.25$ already had. The rate degrades monotonically, $0.035 \to
+0.179 \to 0.356$, so the first quarter of the $\gamma$ range contains nearly all of the
+value. $\gamma=1$ is again dominated: it is indistinguishable from $\gamma=0.75$ in error
+while its extra conditioning is marginal.
+
+\noindent \textbf{Membrane: no trade exists.} Every nonzero $\gamma$ improves $\kappa$
+without costing accuracy --- $\gamma=0.25$ and $\gamma=1$ are $4.7\%$ \emph{more} accurate
+than CPG as well as better conditioned --- so $T$ is undefined for all of them and the
+correct reading is that $\gamma$ is free here, not that it is cheap. The gains are small
+in absolute terms ($1.5\times$ at most), because this dataset is well conditioned to begin
+with.
+
+\paragraph{What the rest of the sweep adds.} The three readings above are taken at one
+$R$. Evaluating \eqref{eq:exchange} at every cardinality audits them, and qualifies one.
+Fig.~\ref{fig:T} plots the $\gamma$-dependence at representative cardinalities; the counts
+below are over the whole sweep.
+
+\begin{itemize}
+\item \textbf{Pellet-Cladding has an expensive band immediately before the cheap one.}
+The only cells in the entire sweep with $T>1$ --- a worse-than-even trade --- are 19
+cells confined to $R=14$--$19$, peaking at $T=5.07$ ($R=15$, $\gamma=0.5$); the $R=15$
+curve in Fig.~\ref{fig:T} lies wholly above the even-trade line. At those
+cardinalities CPG's $\kappa$ has not yet degraded while the family's error penalty is
+already fully paid, so the exchange is bad; from $R=20$ it inverts. The knob is therefore
+not merely less useful below $R=20$, it is actively poor value between $R=14$ and $R=19$,
+which no summary over $R$ and no single-$R$ reading would show.
+\item \textbf{The membrane recommendation is confined to $R\lesssim22$.} At $\gamma=1$ the
+cells are free or trading for $R\le22$, but \emph{adverse} at 14 of the 17 cardinalities
+$R\ge24$. The choice of $\gamma=1$ there is correct at $R=20$ and reverses beyond it. This
+is the clearest instance of why one $R$ is a real restriction, and it is the reason
+Caveat~\ref{cav:oneR} is worded as it is.
+\item \textbf{Half-disks has no trade anywhere it is interpretable.} Below the rank
+cliff only 4 of 60 cells are anything other than ``$\kappa$ unchanged'', and all four are
+\emph{adverse} ($R=12$ and $R=14$, $\gamma\ge0.75$). Every cell in which $\gamma$ appears
+to gain something lies past $R=17$, where $\kappa$ is round-off. The null result is not an
+artefact of the cardinality chosen for it, which is why the left panel of
+Fig.~\ref{fig:T} is empty.
+\end{itemize}
+
+\subsection{Error and conditioning as direct functions of $\gamma$}\label{sec:gammadirect}
+
+Fig.~\ref{fig:fixedR} plots the two quantities against \emph{each other} at one fixed
+cardinality. Fig.~\ref{fig:errkappa} plots them against
+$\gamma$ itself, one curve per cardinality, with no aggregation --- which is what makes
+the $R$-dependence visible rather than averaged away. Absolute error is recovered exactly
+from the recorded relative one: the precision metric divides by a single shared
+denominator, $\text{\texttt{scale}}=\max_q\|\theta_q\|$ over the training set
+(\S\ref{sec:protocol}), so $E_{\mathrm{abs}}=\text{\texttt{test\_max\_rel\_err}}\times
+\text{\texttt{scale}}$.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{gamma_error_kappa.png}
+\caption{Maximum absolute test error (top) and Gram condition number (bottom) against
+$\gamma$, one curve per cardinality, for each dataset. Half-disks (left) is flat in
+$\gamma$ in both rows --- the null result of \S\ref{sec:gamma}, here with no aggregation
+to hide behind; the three coincident lower curves are $R\ge17$, past the numerical rank,
+and are drawn dotted because their $\kappa$ is round-off. Pellet-Cladding (centre) is the
+responsive case, and the two rows lean in opposite directions, which is the trade-off
+stated as a picture: error rises with $\gamma$ at every $R$, $\kappa$ falls with $\gamma$
+at every $R$. Note that both effects are strongest at small $R$ and vanish by $R=30$,
+where all five members coincide. Membrane (right) moves by a few percent with no
+consistent direction.}
+\label{fig:errkappa}
+\end{figure}
+
+\noindent Two features are worth reading off the centre column directly. First, the
+$\kappa$ curves are steepest between $\gamma=0$ and $\gamma=0.25$ --- at $R=20$ and
+$R=25$ almost the entire drop, from $\approx10^{7}$ to $\approx2\times10^{5}$, has already
+happened by $\gamma=0.25$, and the remaining three quarters of the range buy little. The
+error curves over that same first step are nearly flat at those $R$. This is the same
+corner \S\ref{sec:fixedR} locates at $R=20$, here visible across every $R$ at once. Second, the curves flatten from
+the right as $R$ grows: at $R=25$ the error is constant for $\gamma\ge0.25$ and at $R=30$
+it is constant throughout, because by then every member has selected an equivalent cone.
+The knob has an operating range in $R$, and outside it there is nothing to tune.
+
+\subsection{Which $\gamma$ to use}
+
+Read at the fixed cardinalities of \S\ref{sec:fixedR}, with no aggregation:
+
+\begin{itemize}
+\item \textbf{Half-disks: $\gamma=0$, i.e. leave CPG alone.} The weight is inert for
+$\gamma\le0.5$ and strictly harmful beyond, and the region above the rank cliff where the
+family appears to separate is not interpretable.
+\item \textbf{Pellet-Cladding: $\gamma=0.25$.} It captures $63.8$ of the $125.4$ available
+conditioning gain for $1.16\times$ the error, where the members that capture the rest cost
+$5.4\times$. This is the value the $\sigma^{\gamma}$ bound predicts should work
+($\sigma=186.85$, so $\sigma^{0.25}=3.7$ bounds the loss, and the realized $1.16$ is well
+inside it), and it is inside the $\gamma\approx0.2$--$0.4$ window that the norm spread
+suggests a priori.
+\item \textbf{Membrane: $\gamma=1$, but only for $R\lesssim22$.} At $R=20$ it has the
+best conditioning of the family ($1.47\times$) and $4.7\%$ better error than CPG --- free
+rather than a trade. The qualification is not cosmetic: past $R\approx24$ that member
+turns adverse at 14 of the 17 cardinalities $R\ge24$, so at larger $R$ the
+recommendation here is $\gamma=0$. The absolute stakes are low either way.
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{gamma_recommended.png}
+\caption{Each dataset's own recommended $\gamma$ against CPG and mCPG across the whole
+sweep, with the cardinality at which the recommendation was made marked. The
+recommendation differs per dataset, so this is not the fixed pair drawn in the
+per-dataset comparison figures. ADG's default $\gamma=1$ is shown faint and dashed
+wherever it is \emph{not} the recommendation, which is what makes the cost of taking the
+default visible: on Pellet-Cladding it sits far above the recommended $\gamma=0.25$ in
+error for the whole range $R\lesssim25$. On Half-disks the recommendation is CPG's own
+rule, so the two coincide exactly and CPG is drawn as a wide pale band beneath it; that
+coincidence is the finding there, not a plotting artefact.}
+\label{fig:reco}
+\end{figure}
+
+\noindent Fig.~\ref{fig:reco} shows the three recommendations against the baselines over
+the full sweep, which is the check that the fixed-$R$ choice of \S\ref{sec:fixedR} is not
+an artefact of that $R$: the recommended curve is at or below the $\gamma=1$ default in
+error everywhere on Pellet-Cladding, not only at $R=20$.
+
+\noindent The general statement is narrower than the family's motivation suggests. $\gamma$
+is a free knob, it is well defined, and its endpoints reproduce two existing methods
+exactly --- but on one of three datasets it is inert or harmful, on another it is free and
+immaterial, and only on the third does the choice carry real consequences. What predicts
+which case obtains is $\sigma$, computable from the snapshots before any method runs; this
+is the same shape of conclusion as \S\ref{sec:cliff}, where the numerical rank predicted
+the usable range.
+
 \section{Caveats}
 
 \begin{enumerate}
@@ -819,6 +1138,22 @@ reverse rankings a matched-$R$ reading shows plainly, most visibly for NMF's app
 Half-disks advantage (\S\ref{sec:precost}), which turned out to be confined to
 cardinalities past the training set's numerical rank rather than a general property of
 the method.
+\item \textbf{The $\gamma$ recommendation is limited by the grid.} $\gamma=0.25$ is
+the smallest nonzero value swept, and on Pellet-Cladding below $R=21$ it is the only
+member that keeps error near CPG's --- so it may be at the edge of the useful range rather
+than at its optimum. Whether $\gamma\in(0,0.25)$ retains the conditioning gain at a lower
+error cost is not measured here.
+\item\label{cav:oneR} \textbf{The $\gamma$ comparison rests on one cardinality per
+dataset} ($R=12$, $20$, $20$; \S\ref{sec:fixedR}). The rule fixing them --- the numerical
+rank cliff, and the smallest $R$ at which CPG is within $20\%$ of its own error floor ---
+involves only CPG and the snapshot spectrum, not the $\gamma$ results, but it is a single
+$R$ nonetheless, and one recommendation is known to be local to it: $\gamma=1$ on membrane
+is free at $R=20$ and adverse at almost every $R\ge24$ (\S\ref{sec:fixedR}).
+An earlier version of this section aggregated over the whole sweep instead and reached a
+different conclusion on Pellet-Cladding ($\gamma=0.75$ rather than $\gamma=0.25$), because
+every member converges in error by $R\approx25$ and a median is dominated by that tail.
+Fig.~\ref{fig:T} and \S\ref{sec:gammadirect} give the exchange rate and the underlying
+quantities across a range of $R$ so both the choice and its locality can be checked.
 \end{enumerate}
 
 \section*{Reproduction}
@@ -834,9 +1169,15 @@ python -m bench figures  --results results/sweep_dense --out results/figures --s
 python -m bench decrement --cardinality-results results/sweep_dense \
        --tolerance-results results --out results/figures
 python -m bench reconstruct --R 8 --separate --out results/figures
+
+# The gamma family (Sec. 8). Same runner, widened method set.
+python -m bench run --datasets fem_lambda physics membrane_2d \\
+       --methods adg_g0 adg_g25 adg_g50 adg_g75 adg_g100 cpg_bee20 mcpg_ndee22 nmf_s0 \\
+       --cardinalities $(seq 1 40) --no-infsup --no-determinism \\
+       --subsample 200 --out results/gamma_study
 \end{verbatim}
 \noindent Main grid 174/210 cells in 919\,s; dense sweep 817/840 cells in 1848\,s;
-146 tests passing.
+165 tests passing. The $\gamma$ grid is 960 cells.
 
 
 \appendix

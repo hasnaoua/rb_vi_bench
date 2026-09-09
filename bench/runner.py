@@ -70,7 +70,10 @@ def _subsample(dataset: Dataset, cap: int | None) -> Dataset:
         if sel is None:
             return None
         out = [remap[int(i)] for i in sel if int(i) in remap]
-        return np.asarray(out, int) if out else None
+        # Empty stays EMPTY, never None -- see Dataset.train(). ``None`` would mean
+        # "this source ships no split" and would make the fit fall back to every
+        # column, i.e. train on the test snapshots.
+        return np.asarray(out, int)
 
     fields = dataclasses.asdict(dataset)
     fields["snapshots"] = dataset.snapshots[:, sorted(keep)]
@@ -79,6 +82,15 @@ def _subsample(dataset: Dataset, cap: int | None) -> Dataset:
                                   if dataset.primal_snapshots is not None else None)
     fields["train_idx"] = project(dataset.train_idx)
     fields["test_idx"] = project(dataset.test_idx)
+    # Caught here rather than left to Dataset.train(), so the message names the cause:
+    # the stride is evenly spaced over ALL columns, so a cap much smaller than the
+    # split can land entirely on held-out ones.
+    if fields["train_idx"] is not None and len(fields["train_idx"]) == 0:
+        raise ValueError(
+            f"{dataset.name}: --subsample {cap} keeps no training column "
+            f"(the split has {len(dataset.train_idx)} of {dataset.n_snapshots}). "
+            "Raise the cap; a smaller one would fit on the held-out snapshots."
+        )
     fields["name"] = f"{dataset.name}[n<={cap}]"
     # dataclasses.asdict does not round-trip anything that is not plain data: callables
     # are lost and NESTED DATACLASSES are flattened to dicts. B_of_mu, A and geometry all

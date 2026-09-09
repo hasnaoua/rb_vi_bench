@@ -157,13 +157,29 @@ class Dataset:
                 raise ValueError(f"{self.name}: every snapshot is numerically zero")
             # Index-valued fields must be remapped onto the surviving columns, not merely
             # filtered: a stale index would silently point at a different snapshot.
-            remap = {int(old): new for new, old in enumerate(np.flatnonzero(keep))}
+            survivors = np.flatnonzero(keep)
+            remap = {int(old): new for new, old in enumerate(survivors)}
             for attr in ("train_idx", "test_idx"):
                 sel = getattr(self, attr)
                 if sel is not None:
                     kept = [remap[int(i)] for i in sel if int(i) in remap]
-                    object.__setattr__(self, attr,
-                                       np.asarray(kept, int) if kept else None)
+                    # Empty stays EMPTY, never None. None is the sentinel for "this
+                    # source ships no split", and collapsing an emptied split onto it
+                    # would make ``train()`` silently return every column -- i.e. fit on
+                    # the held-out snapshots and report the result as a test error.
+                    object.__setattr__(self, attr, np.asarray(kept, int))
+            # Callables keyed by snapshot index have to be re-keyed too, not merely
+            # carried: they are indexed by COLUMN, so after a drop the caller's index j
+            # names surviving column j while the callable still expects the original.
+            # Left unrewrapped, every reduced solve past the first dropped column is
+            # assembled from a mismatched B(mu)/f(mu)/g(mu).
+            for attr in ("B_of_mu", "rhs_of_mu", "gap_of_mu"):
+                original = getattr(self, attr)
+                if original is not None:
+                    object.__setattr__(
+                        self, attr,
+                        (lambda j, _o=survivors, _f=original: _f(int(_o[j]))),
+                    )
             if self.params is not None:
                 object.__setattr__(self, "params", np.asarray(self.params)[keep])
             if self.primal_snapshots is not None:
@@ -218,6 +234,15 @@ class Dataset:
     def train(self) -> np.ndarray:
         if self.train_idx is None:
             return self.snapshots
+        # An empty split is an error, not a fallback. Returning ``self.snapshots`` here
+        # would fit the method on the held-out columns and report the result as a test
+        # error, with nothing in the output to say so.
+        if len(self.train_idx) == 0:
+            raise ValueError(
+                f"{self.name}: the training split is empty. This is not the same as "
+                "shipping no split (train_idx=None); it means every training column "
+                "was dropped, and fitting would silently fall back to the test set."
+            )
         return self.snapshots[:, self.train_idx]
 
     def test(self) -> np.ndarray | None:

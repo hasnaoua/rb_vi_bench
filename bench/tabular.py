@@ -68,9 +68,15 @@ def write_csv(path: Path, rows: list[dict]) -> None:
     Cells legitimately produce different columns, so a fixed header taken from the first
     row would silently drop whatever later rows added.
     """
-    if not rows:
-        return
     path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        # Truncate rather than return. Returning left whatever a previous run wrote at
+        # this path in place, so a run that legitimately produced nothing was read back
+        # as if its predecessor's rows were current. An empty file reads as zero rows,
+        # which is what happened; a missing one would send the caller to
+        # MISSING_GRID_HINT and blame a run that did happen.
+        path.write_text("")
+        return
     fields: list[str] = []
     for row in rows:
         for k in row:
