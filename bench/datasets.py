@@ -207,7 +207,9 @@ def _physics() -> Dataset:
 
 def _membrane_2d() -> Dataset:
     """2-D membrane obstacle problem -- the [NDEE22] §5.1 analogue, in 2-D."""
-    from greedy.synthetic_data.contact_forces.membrane_hf import MembraneHF, training_grid
+    from greedy.synthetic_data.contact_forces.membrane_hf import (
+        MembraneHF, obstacle, training_grid,
+    )
 
     # n=36 rather than the module default 48: 497 contact dofs against 885, for a third
     # of the build time. The dual dimension is what matters here and 497 is ample.
@@ -221,6 +223,36 @@ def _membrane_2d() -> Dataset:
     S: np.ndarray = np.asarray(L, float).T
     idx = np.arange(S.shape[1])
     test_idx = idx[::5]
+
+    # --- the high-fidelity problem itself, so the reduced system can be SOLVED -------
+    #
+    # Every other dataset ships a snapshot matrix and nothing else, which is why
+    # ``metrics.online`` had no dataset to run on (Caveat 1) and the whole conditioning
+    # argument rested on an unvalidated proxy. This source does expose its assembly, so
+    # the operators are reconstructed here and the solved-error metric turns on.
+    #
+    # Mapping onto [BEE20] Eq. (44)-(45), as ``metrics.online.solve_reduced_general``
+    # consumes them. The HF model minimizes  1/2 lam' P lam - lam' b  with
+    # ``b = M_c (psi - S K^{-1} f)`` and recovers ``u = K^{-1}(f + S' M_c lam)``, while
+    # the reduced form minimizes  1/2 a' Q a - a' c  with ``c = B A^{-1} f - g`` and
+    # recovers ``u = A^{-1}(f - B' a)``. The two agree exactly under
+    #
+    #     A = K,   f = f,   B = -M_c S,   g(mu) = -M_c psi(mu)
+    #
+    # -- the sign carries the difference between "constraint residual" and "gap", and
+    # getting it backwards silently flips the recovered displacement. Verified against
+    # ``hf.solve`` in ``test_datasets``: with the full primal space and the orthant as
+    # the cone, the reduced solve reproduces the HF pair, and on the HF's own objective
+    # it lands at or below cvxopt's own answer at every sampled parameter.
+    K = np.asarray(hf.K.todense(), float)
+    f_vec = np.asarray(hf.f, float)
+    Mc = np.asarray(hf._Mc_d, float)
+    cnodes = np.asarray(hf.cnodes, int)
+    sel = np.zeros((cnodes.size, K.shape[0]))
+    sel[np.arange(cnodes.size), cnodes] = 1.0
+    B_const = -(Mc @ sel)
+    cnode_coords = hf.cnode_coords
+
     return Dataset(
         name="membrane_2d",
         snapshots=S,
@@ -230,6 +262,13 @@ def _membrane_2d() -> Dataset:
         train_idx=np.setdiff1d(idx, test_idx),
         test_idx=test_idx,
         primal_snapshots=np.asarray(U, float).T,
+        A=K,
+        # B and the load are parameter-independent here; only the obstacle moves. They
+        # are still exposed as callables because that is the Dataset contract, and a
+        # source whose B(mu) genuinely varies has to be able to say so.
+        B_of_mu=lambda i, _B=B_const: _B,
+        rhs_of_mu=lambda i, _f=f_vec: _f,
+        gap_of_mu=lambda i, _M=Mc, _c=cnode_coords, _p=params: -(_M @ obstacle(_c, _p[i])),
         # Contact nodes are scattered inside the obstacle disc, not on a tensor grid.
         geometry=geometry.scatter_geometry(hf.cnode_coords),
     )
